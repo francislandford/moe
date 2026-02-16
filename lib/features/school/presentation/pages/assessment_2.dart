@@ -25,7 +25,13 @@ class SchoolAssessmentFormPage extends StatelessWidget {
         provider.level = schoolLevel ?? 'ECE';
         // ─── FIXED: Automatically set reqLevel = level (from route) ───────
         provider.reqLevel = provider.level;
-        provider.fetchGradesForLevel(provider.level, context);
+
+        // Load grades from cache first (offline-first), then refresh silently
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          provider.loadGradesFromCache(provider.level);
+          provider.fetchGradesForLevel(provider.level, context);
+        });
+
         return provider;
       },
       child: _SchoolAssessmentFormContent(
@@ -60,6 +66,12 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   final Map<String, FocusNode> _dropdownFocusNodes = {};
 
   @override
+  void initState() {
+    super.initState();
+    // Load any pending offline assessments count if needed
+  }
+
+  @override
   void dispose() {
     _scrollController.dispose();
     _dropdownFocusNodes.values.forEach((node) => node.dispose());
@@ -86,10 +98,43 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
           onPressed: () => context.pop(),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.sync, color: Colors.white),
-            tooltip: 'Offline Assessments',
-            onPressed: () => context.push('/offline-assessments'),
+          // Show pending count badge if offline items exist
+          Consumer<AssessmentProvider>(
+            builder: (context, prov, child) {
+              return Stack(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.sync, color: Colors.white),
+                    tooltip: 'Offline Assessments',
+                    onPressed: () => context.push('/offline-assessments'),
+                  ),
+                  if (prov.pendingCount > 0)
+                    Positioned(
+                      right: 4,
+                      top: 4,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          '${prov.pendingCount}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -251,6 +296,15 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                           subtitle:
                           'The purpose of this section is to check whether schools are reporting student numbers accurately. Go around to each of the classrooms and conduct a physical head count.',
                           children: [
+                            // Show loading indicator for grades if needed
+                            if (provider.isLoadingGrades)
+                              const Padding(
+                                padding: EdgeInsets.only(bottom: 16),
+                                child: Text(
+                                  'Refreshing grades in background...',
+                                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                                ),
+                              ),
                             ...provider.verifyStudentRecords.asMap().entries.map((entry) {
                               final index = entry.key;
                               final record = entry.value;
@@ -366,7 +420,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Dynamic Verify Student Row – FIXED: no jump
+  // Dynamic Verify Student Row – FIXED: offline-first with proper caching
   // ────────────────────────────────────────────────
   Widget _verifyStudentRow(
       BuildContext context,
@@ -374,6 +428,24 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
       Map<String, dynamic> record,
       AssessmentProvider provider,
       ) {
+    // Get the current selected value
+    final currentValue = record['classGrade'] as String?;
+
+    // Check if the current value exists in the grades list
+    final bool valueExists = provider.gradesForLevel.any(
+            (grade) => grade['name']?.toString() == currentValue
+    );
+
+    // If the value doesn't exist in current items, set it to null to avoid assertion error
+    if (currentValue != null && !valueExists && provider.gradesForLevel.isNotEmpty) {
+      // Schedule a microtask to update the record (can't call setState here directly)
+      Future.microtask(() {
+        if (mounted) {
+          provider.updateVerifyStudent(index, 'classGrade', null);
+        }
+      });
+    }
+
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
@@ -381,36 +453,72 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DropdownButtonFormField<String?>(
-              value: record['classGrade'] as String?,
-              menuMaxHeight: 240,
-              decoration: const InputDecoration(
-                labelText: 'Class / Grade *',
-                border: OutlineInputBorder(),
-              ),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text(
-                    'Select a grade...',
-                    style: TextStyle(color: Colors.grey),
-                  ),
+            // Show dropdown if grades exist (from cache or API)
+            if (provider.gradesForLevel.isNotEmpty)
+              DropdownButtonFormField<String?>(
+                key: ValueKey('grade_dropdown_$index'), // Force rebuild when grades change
+                value: valueExists ? currentValue : null,
+                menuMaxHeight: 240,
+                decoration: const InputDecoration(
+                  labelText: 'Class / Grade *',
+                  border: OutlineInputBorder(),
+                  hintText: 'Select a grade',
                 ),
-                ...provider.gradesForLevel.map((grade) {
-                  final id = grade['id']?.toString();
-                  final name = grade['name']?.toString() ?? 'Unnamed Grade';
-                  return DropdownMenuItem<String?>(
-                    value: name,
-                    child: Text(name),
-                  );
-                }).toList(),
-              ],
-              onChanged: (String? v) {
-                provider.updateVerifyStudent(index, 'classGrade', v);
-              },
-              validator: (v) => v == null ? 'Required' : null,
-              dropdownColor: Theme.of(context).scaffoldBackgroundColor,
-            ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text(
+                      'Select a grade...',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                  ...provider.gradesForLevel.map((grade) {
+                    final name = grade['name']?.toString() ?? 'Unnamed Grade';
+                    return DropdownMenuItem<String?>(
+                      value: name,
+                      child: Text(name),
+                    );
+                  }).toList(),
+                ],
+                onChanged: (String? v) {
+                  provider.updateVerifyStudent(index, 'classGrade', v);
+                },
+                validator: (v) => v == null ? 'Please select a grade' : null,
+                dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+              )
+            else
+            // Show a loading or info message when no grades are available
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(4),
+                  color: Colors.grey.shade50,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      provider.isLoadingGrades ? Icons.hourglass_empty : Icons.info_outline,
+                      color: provider.isLoadingGrades ? Colors.grey : Colors.orange.shade700,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        provider.isLoadingGrades
+                            ? 'Loading grades from cache...'
+                            : provider.gradesForLevel.isEmpty && !provider.isLoadingGrades
+                            ? 'No grades available offline. Please connect to internet to load grades.'
+                            : 'Select a grade',
+                        style: TextStyle(
+                          color: provider.isLoadingGrades ? Colors.grey : Colors.orange.shade700,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -466,7 +574,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Section Card (unchanged)
+  // Section Card
   // ────────────────────────────────────────────────
   Widget _sectionCard({
     required String title,
@@ -481,10 +589,23 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary,
+              ),
+            ),
             if (subtitle != null) ...[
               const SizedBox(height: 8),
-              Text(subtitle, style: TextStyle(color: Colors.grey[700])),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  color: Colors.grey[700],
+                  fontSize: 14,
+                ),
+              ),
             ],
             const SizedBox(height: 20),
             ...children,
@@ -495,7 +616,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Absent Row – FIXED: no jump
+  // Absent Row
   // ────────────────────────────────────────────────
   Widget _absentRow(BuildContext context, int index, Map<String, dynamic> data) {
     return Card(
@@ -506,17 +627,35 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
           children: [
             TextFormField(
               controller: data['fname'],
-              decoration: const InputDecoration(labelText: 'Full Name *'),
+              decoration: const InputDecoration(
+                labelText: 'Full Name *',
+                border: OutlineInputBorder(),
+              ),
               validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
             ),
             const SizedBox(height: 16),
-            TextFormField(controller: data['bio_id'], decoration: const InputDecoration(labelText: 'Bio ID')),
+            TextFormField(
+              controller: data['bio_id'],
+              decoration: const InputDecoration(
+                labelText: 'Bio ID',
+                border: OutlineInputBorder(),
+              ),
+            ),
             const SizedBox(height: 16),
-            TextFormField(controller: data['pay_id'], decoration: const InputDecoration(labelText: 'Pay ID')),
+            TextFormField(
+              controller: data['pay_id'],
+              decoration: const InputDecoration(
+                labelText: 'Pay ID',
+                border: OutlineInputBorder(),
+              ),
+            ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               value: data['excuse'],
-              decoration: const InputDecoration(labelText: 'Excuse'),
+              decoration: const InputDecoration(
+                labelText: 'Excuse',
+                border: OutlineInputBorder(),
+              ),
               items: const ['Yes', 'No']
                   .map((e) => DropdownMenuItem(value: e, child: Text(e)))
                   .toList(),
@@ -530,7 +669,10 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
             const SizedBox(height: 16),
             TextFormField(
               controller: data['reason'],
-              decoration: const InputDecoration(labelText: 'Reason'),
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                border: OutlineInputBorder(),
+              ),
               maxLines: 2,
             ),
             const SizedBox(height: 8),
@@ -548,7 +690,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Staff Row – FIXED: no jump
+  // Staff Row
   // ────────────────────────────────────────────────
   Widget _staffRow(BuildContext context, int index, Map<String, dynamic> data) {
     return Card(
@@ -559,7 +701,10 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
           children: [
             TextFormField(
               controller: data['fname'],
-              decoration: const InputDecoration(labelText: 'Full Name *'),
+              decoration: const InputDecoration(
+                labelText: 'Full Name *',
+                border: OutlineInputBorder(),
+              ),
               validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
             ),
             const SizedBox(height: 16),
@@ -568,7 +713,10 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: data['gender'],
-                    decoration: const InputDecoration(labelText: 'Gender'),
+                    decoration: const InputDecoration(
+                      labelText: 'Gender',
+                      border: OutlineInputBorder(),
+                    ),
                     items: ['Male', 'Female', 'Other']
                         .map((e) => DropdownMenuItem(value: e, child: Text(e)))
                         .toList(),
@@ -584,7 +732,10 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: data['present'],
-                    decoration: const InputDecoration(labelText: 'Present'),
+                    decoration: const InputDecoration(
+                      labelText: 'Present',
+                      border: OutlineInputBorder(),
+                    ),
                     items: ['Yes', 'No', 'Partial']
                         .map((e) => DropdownMenuItem(value: e, child: Text(e)))
                         .toList(),
@@ -599,21 +750,45 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
               ],
             ),
             const SizedBox(height: 16),
-            TextFormField(controller: data['position'], decoration: const InputDecoration(labelText: 'Position')),
+            TextFormField(
+              controller: data['position'],
+              decoration: const InputDecoration(
+                labelText: 'Position',
+                border: OutlineInputBorder(),
+              ),
+            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: data['week_load'],
-              decoration: const InputDecoration(labelText: 'Weekly Load'),
+              decoration: const InputDecoration(
+                labelText: 'Weekly Load',
+                border: OutlineInputBorder(),
+              ),
               keyboardType: TextInputType.number,
             ),
             const SizedBox(height: 16),
-            TextFormField(controller: data['bio_id'], decoration: const InputDecoration(labelText: 'Bio ID')),
+            TextFormField(
+              controller: data['bio_id'],
+              decoration: const InputDecoration(
+                labelText: 'Bio ID',
+                border: OutlineInputBorder(),
+              ),
+            ),
             const SizedBox(height: 16),
-            TextFormField(controller: data['pay_id'], decoration: const InputDecoration(labelText: 'Pay ID')),
+            TextFormField(
+              controller: data['pay_id'],
+              decoration: const InputDecoration(
+                labelText: 'Pay ID',
+                border: OutlineInputBorder(),
+              ),
+            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: data['qualification'],
-              decoration: const InputDecoration(labelText: 'Qualification'),
+              decoration: const InputDecoration(
+                labelText: 'Qualification',
+                border: OutlineInputBorder(),
+              ),
               maxLines: 2,
             ),
             const SizedBox(height: 8),
@@ -631,7 +806,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Fee Row – FIXED: no jump
+  // Fee Row
   // ────────────────────────────────────────────────
   Widget _feeRow(BuildContext context, int index, Map<String, dynamic> feeData) {
     final provider = Provider.of<AssessmentProvider>(context, listen: false);
@@ -646,7 +821,10 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
               value: feeData['fee'],
               isExpanded: true,
               menuMaxHeight: 240,
-              decoration: const InputDecoration(labelText: 'Fee Type *', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                labelText: 'Fee Type *',
+                border: OutlineInputBorder(),
+              ),
               items: const [
                 'PTA',
                 'Development fees',

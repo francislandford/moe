@@ -35,7 +35,7 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
   final _teachersPresentController = TextEditingController();
   final _verifyCommentController = TextEditingController();
   final _yearEstablishedController = TextEditingController();
-  final _noRoomController = TextEditingController(); // NEW: Number of Rooms
+  final _noRoomController = TextEditingController(); // Number of Rooms
 
   // Selections
   String? _selectedCounty;
@@ -56,8 +56,10 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
   @override
   void initState() {
     super.initState();
-    // Fetch counties, levels, types, ownerships on page load
+    // Load from cache immediately (offline-first)
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadDropdownsFromCache();
+      // Then silently refresh if online (background)
       context.read<SchoolProvider>().fetchDropdownData(context);
     });
 
@@ -79,9 +81,15 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
     _teachersPresentController.dispose();
     _verifyCommentController.dispose();
     _yearEstablishedController.dispose();
-    _noRoomController.dispose(); // NEW
+    _noRoomController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  // Load dropdowns from cache immediately
+  void _loadDropdownsFromCache() {
+    final provider = context.read<SchoolProvider>();
+    provider.loadFromCache();
   }
 
   /// Get real device GPS location (no fallback, no storage, no default)
@@ -143,15 +151,8 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
         });
       }
     } catch (e) {
+      // Log error but don't show to user
       debugPrint('GPS error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to get location: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
     } finally {
       if (mounted) {
         setState(() => _isGettingLocation = false);
@@ -167,7 +168,7 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
     final schoolData = {
       'county': _selectedCounty,
       'district': _selectedDistrict,
-      'school_level': _selectedLevel, // ← now the code
+      'school_level': _selectedLevel,
       'school_type': _selectedType,
       'school_ownership': _selectedOwnership,
       'community': _communityController.text.trim(),
@@ -187,7 +188,7 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
       'all_teacher_present': _teachersPresent,
       'verify_comment': _verifyCommentController.text.trim(),
       'charge_fees': _chargeFees,
-      'nb_room': int.tryParse(_noRoomController.text.trim() ?? '0') ?? 0, // NEW: added to payload
+      'nb_room': int.tryParse(_noRoomController.text.trim() ?? '0') ?? 0,
     };
 
     final result = await provider.createSchool(schoolData, context);
@@ -278,18 +279,21 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
           onTap: () => FocusScope.of(context).unfocus(),
           child: Column(
             children: [
-              FutureBuilder<bool>(
-                future: LocalStorageService.isOnline(),
+              // Offline mode indicator - updates in real-time
+              StreamBuilder<bool>(
+                stream: LocalStorageService.onlineStatusStream,
+                initialData: true,
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.done &&
-                      snapshot.hasData &&
-                      !snapshot.data!) {
-                    return Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Chip(
-                        label: const Text('Offline Mode — Data will sync later'),
-                        backgroundColor: Colors.orange.shade100,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  final bool isOnline = snapshot.data ?? true;
+                  if (!isOnline) {
+                    return Container(
+                      width: double.infinity,
+                      color: Colors.orange.shade100,
+                      padding: const EdgeInsets.all(12),
+                      child: const Text(
+                        'Offline Mode — Data will be saved locally and sync later',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.w600),
                       ),
                     );
                   }
@@ -306,17 +310,23 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        // 1. Location
+                        // 1. Location - with offline-first dropdowns
                         _buildSectionCard(
                           title: 'Location',
                           children: [
+                            // County Dropdown
                             DropdownButtonFormField<String>(
                               value: _selectedCounty,
                               decoration: const InputDecoration(
                                 labelText: 'County *',
                                 border: OutlineInputBorder(),
                               ),
-                              items: provider.counties.map((m) {
+                              items: provider.counties.isEmpty
+                                  ? [const DropdownMenuItem(
+                                value: null,
+                                child: Text('Loading counties...'),
+                              )]
+                                  : provider.counties.map((m) {
                                 return DropdownMenuItem<String>(
                                   value: m['county'] as String,
                                   child: Text(m['county'] as String),
@@ -325,20 +335,34 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
                               onChanged: (v) {
                                 setState(() {
                                   _selectedCounty = v;
-                                  _selectedDistrict = null;
+                                  _selectedDistrict = null; // Reset district
                                 });
-                                if (v != null) provider.fetchDistricts(v, context);
+                                if (v != null) {
+                                  // Use offline-first district fetch
+                                  context.read<SchoolProvider>().fetchDistricts(v, context);
+                                }
                               },
                               validator: (v) => v == null ? 'Required' : null,
                             ),
                             const SizedBox(height: 16),
+
+                            // District Dropdown
                             DropdownButtonFormField<String>(
                               value: _selectedDistrict,
                               decoration: const InputDecoration(
                                 labelText: 'District *',
                                 border: OutlineInputBorder(),
                               ),
-                              items: provider.districts.map((m) {
+                              items: provider.districts.isEmpty
+                                  ? [DropdownMenuItem(
+                                value: null,
+                                child: Text(
+                                  _selectedCounty == null
+                                      ? 'Select County First'
+                                      : 'No districts available',
+                                ),
+                              )]
+                                  : provider.districts.map((m) {
                                 return DropdownMenuItem<String>(
                                   value: m['d_name'] as String,
                                   child: Text(m['d_name'] as String),
@@ -347,6 +371,16 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
                               onChanged: (v) => setState(() => _selectedDistrict = v),
                               validator: (v) => v == null ? 'Required' : null,
                             ),
+
+                            // Optional: Show subtle indicator for background district refresh
+                            if (provider.isLoading && _selectedCounty != null)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 8),
+                                child: Text(
+                                  'Refreshing districts in background...',
+                                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                                ),
+                              ),
                           ],
                         ),
 
@@ -384,7 +418,12 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
                                 border: const OutlineInputBorder(),
                                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                               ),
-                              items: provider.levels.map((level) {
+                              items: provider.levels.isEmpty
+                                  ? [const DropdownMenuItem(
+                                value: null,
+                                child: Text('Loading levels...'),
+                              )]
+                                  : provider.levels.map((level) {
                                 return DropdownMenuItem<String>(
                                   value: level['code'].toString(),
                                   child: Text(level['name'].toString()),
@@ -397,17 +436,29 @@ class _AddSchoolPageState extends State<AddSchoolPage> {
                             _dropdown(
                               label: 'School Type *',
                               value: _selectedType,
-                              items: provider.types.map((m) => m['name'] as String).toList(),
-                              onChanged: (v) => setState(() => _selectedType = v),
-                              validator: (v) => v == null ? 'Required' : null,
+                              items: provider.types.isEmpty
+                                  ? ['Loading...']
+                                  : provider.types.map((m) => m['name'] as String).toList(),
+                              onChanged: (v) {
+                                if (v != 'Loading...') {
+                                  setState(() => _selectedType = v);
+                                }
+                              },
+                              validator: (v) => v == null || v == 'Loading...' ? 'Required' : null,
                             ),
                             const SizedBox(height: 16),
                             _dropdown(
                               label: 'Ownership *',
                               value: _selectedOwnership,
-                              items: provider.ownerships.map((m) => m['name'] as String).toList(),
-                              onChanged: (v) => setState(() => _selectedOwnership = v),
-                              validator: (v) => v == null ? 'Required' : null,
+                              items: provider.ownerships.isEmpty
+                                  ? ['Loading...']
+                                  : provider.ownerships.map((m) => m['name'] as String).toList(),
+                              onChanged: (v) {
+                                if (v != 'Loading...') {
+                                  setState(() => _selectedOwnership = v);
+                                }
+                              },
+                              validator: (v) => v == null || v == 'Loading...' ? 'Required' : null,
                             ),
                             const SizedBox(height: 16),
                             CustomTextField(

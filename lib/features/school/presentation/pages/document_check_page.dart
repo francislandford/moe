@@ -30,14 +30,16 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
   // Additional scored questions
   List<Map<String, dynamic>> _additionalQuestions = [];
 
-  // Combined scores for BOTH sets (main + additional)
+  // Combined scores for BOTH sets
   Map<String, int?> _scores = {};
 
   @override
   void initState() {
     super.initState();
-    _fetchQuestions(); // Main
-    _fetchAdditionalQuestions(); // Additional
+    // Load from cache first (offline-first)
+    _loadFromCache();
+    // Then refresh if online
+    _refreshQuestionsIfOnline();
   }
 
   @override
@@ -55,21 +57,61 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _fetchQuestions() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
+  // Load both sets from cache (instant offline-first)
+  void _loadFromCache() {
+    final mainCached = LocalStorageService.getFromCache('document_check_questions');
+    if (mainCached != null && mainCached is List) {
+      _questions = mainCached.asMap().entries.map((entry) {
+        final index = entry.key;
+        final item = entry.value;
+        return {
+          'number': (index + 1).toString(),
+          'id': item['id'].toString(),
+          'name': item['name'].toString(),
+        };
+      }).toList();
+
+      // Re-init scores from cache
+      for (var q in _questions) {
+        _scores[q['id']!] = null;
+      }
+    }
+
+    final additionalCached = LocalStorageService.getFromCache('additional_document_questions');
+    if (additionalCached != null && additionalCached is List) {
+      _additionalQuestions = additionalCached.asMap().entries.map((entry) {
+        final index = entry.key;
+        final item = entry.value;
+        return {
+          'number': (index + 1).toString(),
+          'id': item['id'].toString(),
+          'name': item['name'].toString(),
+        };
+      }).toList();
+
+      // Re-init scores from cache
+      for (var q in _additionalQuestions) {
+        _scores[q['id']!] = null;
+      }
+    }
+
+    if (mounted) setState(() {});
+  }
+
+  // Refresh questions only if online (background)
+  Future<void> _refreshQuestionsIfOnline() async {
+    final isOnline = await LocalStorageService.isOnline();
+    if (!isOnline) return;
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final headers = auth.getAuthHeaders();
 
+    // Refresh main questions
     try {
-      print('Fetching main questions: ${AppUrl.url}/questions?cat=Document check');
       final qRes = await http.get(
         Uri.parse('${AppUrl.url}/questions?cat=Document check'),
         headers: headers,
       );
-
-      print('Main questions response: ${qRes.statusCode}');
 
       if (qRes.statusCode == 200) {
         final List<dynamic> list = jsonDecode(qRes.body);
@@ -85,41 +127,28 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
               };
             }).toList();
 
-            // Add to combined scores
+            // Update scores (preserve existing answers if possible)
             for (var q in _questions) {
-              _scores[q['id']!] = null;
+              if (!_scores.containsKey(q['id'])) {
+                _scores[q['id']!] = null;
+              }
             }
           });
+
+          // Cache fresh data
+          await LocalStorageService.saveToCache('document_check_questions', list);
         }
-      } else {
-        throw Exception('Failed to load main questions: ${qRes.statusCode}');
       }
     } catch (e) {
-      print('Fetch main questions error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading main questions: $e'), backgroundColor: Colors.red),
-        );
-      }
+      print('Background refresh main questions failed: $e');
     }
 
-    if (mounted) setState(() => _isLoading = false);
-  }
-
-  Future<void> _fetchAdditionalQuestions() async {
-    if (!mounted) return;
-
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    final headers = auth.getAuthHeaders();
-
+    // Refresh additional questions
     try {
-      print('Fetching additional questions...');
       final res = await http.get(
         Uri.parse('${AppUrl.url}/questions?cat=Additional data on school documentation'),
         headers: headers,
       );
-
-      print('Additional questions response: ${res.statusCode}');
 
       if (res.statusCode == 200) {
         final List<dynamic> list = jsonDecode(res.body);
@@ -135,24 +164,25 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
               };
             }).toList();
 
-            // Add to combined scores (now both sets are scored/submitted)
+            // Update scores
             for (var q in _additionalQuestions) {
-              _scores[q['id']!] = null;
+              if (!_scores.containsKey(q['id'])) {
+                _scores[q['id']!] = null;
+              }
             }
           });
+
+          await LocalStorageService.saveToCache('additional_document_questions', list);
         }
-      } else {
-        print('Failed to load additional questions: ${res.statusCode}');
       }
     } catch (e) {
-      print('Fetch additional questions error: $e');
+      print('Background refresh additional questions failed: $e');
     }
   }
 
   Future<void> _submit() async {
     if (!mounted) return;
 
-    // Check if ANY question (main or additional) is answered
     if (_scores.values.every((v) => v == null)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please answer at least one question'), backgroundColor: Colors.orange),
@@ -173,7 +203,6 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
 
     final headers = auth.getAuthHeaders();
 
-    // ALL scores (main + additional) go together
     final cleanScores = _scores.map((key, value) => MapEntry(key, value ?? 0));
 
     final payload = {
@@ -181,7 +210,7 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
       'scores': cleanScores,
     };
 
-    print('Submitting Document Check payload (main + additional):');
+    print('Submitting Document Check payload:');
     print(jsonEncode(payload));
 
     String message = 'Unknown status';
@@ -189,7 +218,6 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
 
     try {
       final isOnline = await LocalStorageService.isOnline();
-      print('Online status: $isOnline');
 
       if (isOnline) {
         final res = await http.post(
@@ -197,8 +225,6 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
           headers: headers,
           body: jsonEncode(payload),
         );
-
-        print('Server response: ${res.statusCode} - ${res.body}');
 
         if (res.statusCode == 200 || res.statusCode == 201) {
           message = 'Document check saved successfully!';
@@ -281,9 +307,6 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
 
         if (res.statusCode == 200 || res.statusCode == 201) {
           await LocalStorageService.removePendingDocumentCheck(payload);
-          print('Pending document check synced and removed');
-        } else {
-          print('Pending sync failed: ${res.statusCode} - ${res.body}');
         }
       } catch (e) {
         print('Pending document check sync error: $e');
@@ -334,10 +357,7 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
                 child: LoadingOverlay(
                   isLoading: _isLoading,
                   child: RefreshIndicator(
-                    onRefresh: () async {
-                      await _fetchQuestions();
-                      await _fetchAdditionalQuestions();
-                    },
+                    onRefresh: _refreshQuestionsIfOnline,
                     child: SingleChildScrollView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16.0),
@@ -352,10 +372,8 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
                           ),
                           const SizedBox(height: 16),
 
-                          if (_questions.isEmpty && !_isLoading)
-                            const Center(child: Text('No questions loaded. Pull down to refresh.'))
-                          else if (_questions.isEmpty)
-                            const Center(child: CircularProgressIndicator())
+                          if (_questions.isEmpty)
+                            const Center(child: Text('No questions available offline. Connect to internet to load.'))
                           else
                             ListView.builder(
                               shrinkWrap: true,
@@ -395,7 +413,6 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
 
                           const SizedBox(height: 32),
 
-                          // Additional scored questions card
                           Card(
                             elevation: 4,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -414,10 +431,8 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
                                   ),
                                   const SizedBox(height: 16),
 
-                                  if (_additionalQuestions.isEmpty && !_isLoading)
-                                    const Center(child: Text('No additional data loaded.'))
-                                  else if (_additionalQuestions.isEmpty)
-                                    const Center(child: CircularProgressIndicator())
+                                  if (_additionalQuestions.isEmpty)
+                                    const Center(child: Text('No additional data available offline. Connect to internet to load.'))
                                   else
                                     ListView.builder(
                                       shrinkWrap: true,

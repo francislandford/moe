@@ -36,8 +36,10 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
   @override
   void initState() {
     super.initState();
-    _fetchQuestions(); // Main questions
-    _fetchAdditionalQuestions(); // Additional questions
+    // Load from cache first (offline-first)
+    _loadFromCache();
+    // Then refresh if online (background)
+    _refreshQuestionsIfOnline();
   }
 
   @override
@@ -55,21 +57,61 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _fetchQuestions() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
+  // Load both sets from cache (offline-first)
+  void _loadFromCache() {
+    final mainCached = LocalStorageService.getFromCache('infrastructure_questions');
+    if (mainCached != null && mainCached is List) {
+      _questions = mainCached.asMap().entries.map((entry) {
+        final index = entry.key;
+        final item = entry.value;
+        return {
+          'number': (index + 1).toString(),
+          'id': item['id'].toString(),
+          'name': item['name'].toString(),
+        };
+      }).toList();
+
+      // Re-init scores from cache
+      for (var q in _questions) {
+        _scores[q['id']!] = null;
+      }
+    }
+
+    final additionalCached = LocalStorageService.getFromCache('additional_infrastructure_questions');
+    if (additionalCached != null && additionalCached is List) {
+      _additionalQuestions = additionalCached.asMap().entries.map((entry) {
+        final index = entry.key;
+        final item = entry.value;
+        return {
+          'number': (index + 1).toString(),
+          'id': item['id'].toString(),
+          'name': item['name'].toString(),
+        };
+      }).toList();
+
+      // Re-init scores from cache
+      for (var q in _additionalQuestions) {
+        _scores[q['id']!] = null;
+      }
+    }
+
+    if (mounted) setState(() {});
+  }
+
+  // Refresh questions only if online (background)
+  Future<void> _refreshQuestionsIfOnline() async {
+    final isOnline = await LocalStorageService.isOnline();
+    if (!isOnline) return;
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final headers = auth.getAuthHeaders();
 
+    // Refresh main questions
     try {
-      print('Fetching infrastructure questions...');
       final qRes = await http.get(
         Uri.parse('${AppUrl.url}/questions?cat=School Physical Infrastructure'),
         headers: headers,
       );
-
-      print('Response: ${qRes.statusCode}');
 
       if (qRes.statusCode == 200) {
         final List<dynamic> list = jsonDecode(qRes.body);
@@ -85,42 +127,28 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
               };
             }).toList();
 
-            _scores.clear();
+            // Update scores (preserve existing answers if possible)
             for (var q in _questions) {
-              _scores[q['id']!] = null;
+              if (!_scores.containsKey(q['id'])) {
+                _scores[q['id']!] = null;
+              }
             }
           });
+
+          // Cache fresh data
+          await LocalStorageService.saveToCache('infrastructure_questions', list);
         }
-      } else {
-        throw Exception('Failed to load questions: ${qRes.statusCode}');
       }
     } catch (e) {
-      print('Fetch error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading questions: $e'), backgroundColor: Colors.red),
-        );
-      }
+      print('Background refresh infrastructure questions failed: $e');
     }
 
-    if (mounted) setState(() => _isLoading = false);
-  }
-
-  // NEW: Fetch additional scored questions
-  Future<void> _fetchAdditionalQuestions() async {
-    if (!mounted) return;
-
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    final headers = auth.getAuthHeaders();
-
+    // Refresh additional questions
     try {
-      print('Fetching additional infrastructure questions...');
       final res = await http.get(
         Uri.parse('${AppUrl.url}/questions?cat=Additional data on school infrastructure'),
         headers: headers,
       );
-
-      print('Additional response: ${res.statusCode}');
 
       if (res.statusCode == 200) {
         final List<dynamic> list = jsonDecode(res.body);
@@ -136,17 +164,19 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
               };
             }).toList();
 
-            // Add to combined scores
+            // Update scores
             for (var q in _additionalQuestions) {
-              _scores[q['id']!] = null;
+              if (!_scores.containsKey(q['id'])) {
+                _scores[q['id']!] = null;
+              }
             }
           });
+
+          await LocalStorageService.saveToCache('additional_infrastructure_questions', list);
         }
-      } else {
-        print('Failed to load additional questions: ${res.statusCode}');
       }
     } catch (e) {
-      print('Fetch additional error: $e');
+      print('Background refresh additional infrastructure questions failed: $e');
     }
   }
 
@@ -173,7 +203,6 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
 
     final headers = auth.getAuthHeaders();
 
-    // ALL scores (main + additional) go together
     final cleanScores = _scores.map((key, value) => MapEntry(key, value ?? 0));
 
     final payload = {
@@ -189,7 +218,6 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
 
     try {
       final isOnline = await LocalStorageService.isOnline();
-      print('Online: $isOnline');
 
       if (isOnline) {
         final res = await http.post(
@@ -197,8 +225,6 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
           headers: headers,
           body: jsonEncode(payload),
         );
-
-        print('Response: ${res.statusCode} - ${res.body}');
 
         if (res.statusCode == 200 || res.statusCode == 201) {
           message = 'Physical infrastructure assessment saved successfully!';
@@ -331,10 +357,7 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
                 child: LoadingOverlay(
                   isLoading: _isLoading,
                   child: RefreshIndicator(
-                    onRefresh: () async {
-                      await _fetchQuestions();
-                      await _fetchAdditionalQuestions();
-                    },
+                    onRefresh: _refreshQuestionsIfOnline,
                     child: SingleChildScrollView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16.0),
@@ -349,10 +372,8 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
                           ),
                           const SizedBox(height: 16),
 
-                          if (_questions.isEmpty && !_isLoading)
-                            const Center(child: Text('No questions loaded. Pull down to refresh.'))
-                          else if (_questions.isEmpty)
-                            const Center(child: CircularProgressIndicator())
+                          if (_questions.isEmpty)
+                            const Center(child: Text('No questions available offline. Connect to internet to load.'))
                           else
                             ListView.builder(
                               shrinkWrap: true,
@@ -391,7 +412,6 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
 
                           const SizedBox(height: 32),
 
-                          // NEW: Separate card for additional scored questions
                           Card(
                             elevation: 4,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -410,10 +430,8 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
                                   ),
                                   const SizedBox(height: 16),
 
-                                  if (_additionalQuestions.isEmpty && !_isLoading)
-                                    const Center(child: Text('No additional data loaded.'))
-                                  else if (_additionalQuestions.isEmpty)
-                                    const Center(child: CircularProgressIndicator())
+                                  if (_additionalQuestions.isEmpty)
+                                    const Center(child: Text('No additional data available offline. Connect to internet to load.'))
                                   else
                                     ListView.builder(
                                       shrinkWrap: true,

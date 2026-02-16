@@ -21,18 +21,23 @@ class LeadershipPage extends StatefulWidget {
 class _LeadershipPageState extends State<LeadershipPage> {
   bool _isLoading = false;
   bool _isSubmitting = false;
-
   String? _schoolName;
   String? _schoolCode;
   String? _schoolLevel;
 
+  // Scored questions
   List<Map<String, dynamic>> _questions = [];
+
+  // Combined scores
   Map<String, int?> _scores = {};
 
   @override
   void initState() {
     super.initState();
-    _fetchQuestions();
+    // Load from cache first (offline-first)
+    _loadFromCache();
+    // Then refresh if online (background)
+    _refreshQuestionsIfOnline();
   }
 
   @override
@@ -50,21 +55,43 @@ class _LeadershipPageState extends State<LeadershipPage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _fetchQuestions() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
+  // Load questions from cache (offline-first)
+  void _loadFromCache() {
+    final cachedList = LocalStorageService.getFromCache('leadership_questions');
+    if (cachedList != null && cachedList is List) {
+      _questions = cachedList.asMap().entries.map((entry) {
+        final index = entry.key;
+        final item = entry.value;
+        return {
+          'number': (index + 1).toString(),
+          'id': item['id'].toString(),
+          'name': item['name'].toString(),
+        };
+      }).toList();
+
+      // Re-init scores from cache
+      for (var q in _questions) {
+        _scores[q['id']!] = null;
+      }
+    }
+
+    if (mounted) setState(() {});
+  }
+
+  // Refresh questions only if online (background)
+  Future<void> _refreshQuestionsIfOnline() async {
+    final isOnline = await LocalStorageService.isOnline();
+    if (!isOnline) return;
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final headers = auth.getAuthHeaders();
 
     try {
-      print('Fetching leadership questions...');
+      print('Refreshing leadership questions from API...');
       final qRes = await http.get(
         Uri.parse('${AppUrl.url}/questions?cat=School Leadership'),
         headers: headers,
       );
-
-      print('Response: ${qRes.statusCode}');
 
       if (qRes.statusCode == 200) {
         final List<dynamic> list = jsonDecode(qRes.body);
@@ -74,39 +101,32 @@ class _LeadershipPageState extends State<LeadershipPage> {
               final index = entry.key;
               final item = entry.value;
               return {
-                'number': (index + 1).toString(), // 1, 2, 3...
+                'number': (index + 1).toString(),
                 'id': item['id'].toString(),
                 'name': item['name'].toString(),
               };
             }).toList();
 
-            _scores.clear();
+            // Update scores (preserve existing answers if possible)
             for (var q in _questions) {
-              _scores[q['id']!] = null;
+              if (!_scores.containsKey(q['id'])) {
+                _scores[q['id']!] = null;
+              }
             }
           });
+
+          // Cache fresh data
+          await LocalStorageService.saveToCache('leadership_questions', list);
         }
-      } else {
-        throw Exception('Failed to load questions: ${qRes.statusCode}');
       }
     } catch (e) {
-      print('Fetch error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading questions: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-
-    if (mounted) {
-      setState(() => _isLoading = false);
+      print('Background refresh leadership questions failed: $e');
     }
   }
 
   Future<void> _submit() async {
     if (!mounted) return;
 
-    // Optional: warn if no answers
     if (_scores.values.every((v) => v == null)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please answer at least one question'), backgroundColor: Colors.orange),
@@ -142,7 +162,6 @@ class _LeadershipPageState extends State<LeadershipPage> {
 
     try {
       final isOnline = await LocalStorageService.isOnline();
-      print('Online: $isOnline');
 
       if (isOnline) {
         final res = await http.post(
@@ -150,8 +169,6 @@ class _LeadershipPageState extends State<LeadershipPage> {
           headers: headers,
           body: jsonEncode(payload),
         );
-
-        print('Response: ${res.statusCode} - ${res.body}');
 
         if (res.statusCode == 200 || res.statusCode == 201) {
           message = 'Leadership assessment saved successfully!';
@@ -284,7 +301,7 @@ class _LeadershipPageState extends State<LeadershipPage> {
                 child: LoadingOverlay(
                   isLoading: _isLoading,
                   child: RefreshIndicator(
-                    onRefresh: _fetchQuestions,
+                    onRefresh: _refreshQuestionsIfOnline,
                     child: SingleChildScrollView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16.0),
@@ -292,16 +309,15 @@ class _LeadershipPageState extends State<LeadershipPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const SizedBox(height: 24),
+
                           const Text(
                             'All questions are 1 point each except 3.1, 3.2, 3.4, 3.5, 3.10, 3.12, 3.16 & 3.17 (2 points each)',
                             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                           ),
                           const SizedBox(height: 16),
 
-                          if (_questions.isEmpty && !_isLoading)
-                            const Center(child: Text('No questions loaded. Pull down to refresh.'))
-                          else if (_questions.isEmpty)
-                            const Center(child: CircularProgressIndicator())
+                          if (_questions.isEmpty)
+                            const Center(child: Text('No questions available offline. Connect to internet to load.'))
                           else
                             ListView.builder(
                               shrinkWrap: true,
@@ -311,6 +327,7 @@ class _LeadershipPageState extends State<LeadershipPage> {
                                 final q = _questions[index];
                                 final qId = q['id'] as String;
                                 final number = q['number'] as String;
+
                                 return Card(
                                   margin: const EdgeInsets.only(bottom: 12),
                                   child: Padding(
@@ -347,7 +364,6 @@ class _LeadershipPageState extends State<LeadershipPage> {
                               initialData: true,
                               builder: (context, snapshot) {
                                 final bool canSubmit = snapshot.data ?? true;
-
                                 return ElevatedButton.icon(
                                   icon: const Icon(Icons.save),
                                   label: const Text('Submit Leadership Assessment', style: TextStyle(fontSize: 17)),
@@ -361,34 +377,6 @@ class _LeadershipPageState extends State<LeadershipPage> {
                               },
                             ),
                           ),
-
-                          // const SizedBox(height: 16),
-                          //
-                          // SizedBox(
-                          //   height: 56,
-                          //   child: OutlinedButton.icon(
-                          //     icon: const Icon(Icons.arrow_forward_rounded),
-                          //     label: const Text(
-                          //       'Next: Physical Infrastructure (Skip)',
-                          //       style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-                          //     ),
-                          //     onPressed: () {
-                          //       context.go(
-                          //         '/infrastructure',
-                          //         extra: {
-                          //           'schoolCode': _schoolCode,
-                          //           'schoolName': _schoolName,
-                          //           'level': _schoolLevel,
-                          //         },
-                          //       );
-                          //     },
-                          //     style: OutlinedButton.styleFrom(
-                          //       foregroundColor: AppColors.primary,
-                          //       side: const BorderSide(color: AppColors.primary),
-                          //       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          //     ),
-                          //   ),
-                          // ),
 
                           const SizedBox(height: 80),
                         ],

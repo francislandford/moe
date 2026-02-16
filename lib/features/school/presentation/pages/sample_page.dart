@@ -78,8 +78,8 @@ class SampleDashboardPage extends StatelessWidget {
                       //   color: Colors.green,
                       //   route: '/assessment-2',
                       // ),
-
-                      // Assessment Modules
+                      //
+                      // // Assessment Modules
                       // _buildCard(
                       //   context: context,
                       //   icon: Icons.description,
@@ -152,27 +152,27 @@ class SampleDashboardPage extends StatelessWidget {
                         color: Colors.purple,
                         route: '/offline-classroom-observation',
                       ),
-                      // _buildCard(
-                      //   context: context,
-                      //   icon: Icons.verified_user_sharp,
-                      //   title: 'Parents Participation',
-                      //   color: Colors.purple,
-                      //   route: '/parents',
-                      // ),
-                      // _buildCard(
-                      //   context: context,
-                      //   icon: Icons.verified_user_sharp,
-                      //   title: 'Students Participation',
-                      //   color: Colors.purple,
-                      //   route: '/students',
-                      // ),
-                      // _buildCard(
-                      //   context: context,
-                      //   icon: Icons.verified_user_sharp,
-                      //   title: 'Textbooks & Teaching Materials',
-                      //   color: Colors.purple,
-                      //   route: '/textbooks-teaching',
-                      // ),
+                      _buildCard(
+                        context: context,
+                        icon: Icons.verified_user_sharp,
+                        title: 'Parents Participation',
+                        color: Colors.purple,
+                        route: '/offline-parent-participation',
+                      ),
+                      _buildCard(
+                        context: context,
+                        icon: Icons.verified_user_sharp,
+                        title: 'Students Participation',
+                        color: Colors.purple,
+                        route: '/offline-student-participation',
+                      ),
+                      _buildCard(
+                        context: context,
+                        icon: Icons.verified_user_sharp,
+                        title: 'Textbooks & Teaching Materials',
+                        color: Colors.purple,
+                        route: '/offline-textbooks-teaching',
+                      ),
                     ],
                   ),
                 ),

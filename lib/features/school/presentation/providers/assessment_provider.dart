@@ -36,10 +36,15 @@ class AssessmentProvider with ChangeNotifier {
 
   // Grades for Verify Students dropdown (shared across rows)
   List<Map<String, dynamic>> gradesForLevel = [];
+  bool isLoadingGrades = false; // For background refresh indicator
+  String? gradesError; // For logging only, not shown to users
 
   bool isSubmitting = false;
   String? lastError;
   bool lastOffline = false;
+
+  // Pending count getter
+  int get pendingCount => LocalStorageService.getPendingAssessments().length;
 
   // ─── Add / Remove / Update Methods ──────────────────────────────────────────
   void addAbsent() {
@@ -131,16 +136,76 @@ class AssessmentProvider with ChangeNotifier {
     }
   }
 
-  // ─── Fetch grades for Verify Students dropdown ──────────────────────────────
-  Future<void> fetchGradesForLevel(String schoolLevel, BuildContext context) async {
-    print('Fetching grades for level: $schoolLevel');
-    gradesForLevel = [];
+  // ─── Load grades from cache (offline-first) ───────────────────────────
+  void loadGradesFromCache(String schoolLevel) {
+    try {
+      // Try to get grades from cache using the specific key
+      final cachedGrades = LocalStorageService.getFromCache('grades_${schoolLevel.toLowerCase()}');
+
+      if (cachedGrades != null && cachedGrades is List) {
+        gradesForLevel = cachedGrades.map((grade) {
+          if (grade is Map) {
+            return Map<String, dynamic>.from(grade);
+          }
+          return <String, dynamic>{};
+        }).toList();
+        debugPrint('✅ Loaded ${gradesForLevel.length} grades from cache for level: $schoolLevel');
+      } else {
+        debugPrint('ℹ️ No cached grades found for level: $schoolLevel');
+        gradesForLevel = [];
+      }
+    } catch (e) {
+      debugPrint('❌ Error loading grades from cache: $e');
+      gradesForLevel = [];
+    }
     notifyListeners();
+  }
+
+  // ─── Cache grades for offline use ─────────────────────────────────────
+  Future<void> _cacheGrades(String schoolLevel, List<Map<String, dynamic>> grades) async {
+    try {
+      final cacheKey = 'grades_${schoolLevel.toLowerCase()}';
+      await LocalStorageService.saveToCache(cacheKey, grades);
+      debugPrint('✅ Cached ${grades.length} grades for level: $schoolLevel');
+    } catch (e) {
+      debugPrint('❌ Error caching grades: $e');
+    }
+  }
+
+  // ─── Fetch grades for Verify Students dropdown (offline-first) ───
+  Future<void> fetchGradesForLevel(String schoolLevel, BuildContext context) async {
+    debugPrint('🔄 Fetching grades for level: $schoolLevel');
+
+    // Don't show loading if we already have cached data
+    final hadCachedData = gradesForLevel.isNotEmpty;
+
+    // Only show loading if we have no cached data
+    if (!hadCachedData) {
+      isLoadingGrades = true;
+      notifyListeners();
+    }
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     if (!authProvider.isAuthenticated || authProvider.token == null) {
-      print('Cannot fetch grades: User is not authenticated');
-      lastError = 'Authentication required to fetch grades';
+      debugPrint('❌ Cannot fetch grades: User is not authenticated');
+      gradesError = 'Authentication required to fetch grades';
+      isLoadingGrades = false;
+      notifyListeners();
+      return;
+    }
+
+    final isOnline = await LocalStorageService.isOnline();
+
+    // If offline, just use cache (already loaded) and ensure we have data
+    if (!isOnline) {
+      debugPrint('📱 Offline: using cached grades. Count: ${gradesForLevel.length}');
+      isLoadingGrades = false;
+
+      // If we have no cached grades, show a user-friendly message
+      if (gradesForLevel.isEmpty) {
+        debugPrint('⚠️ No cached grades available offline');
+      }
+
       notifyListeners();
       return;
     }
@@ -154,11 +219,10 @@ class AssessmentProvider with ChangeNotifier {
 
     try {
       final uri = Uri.parse('${AppUrl.url}/level/grades?level=$schoolLevel');
-      print('Requesting: $uri');
+      debugPrint('🌐 Requesting: $uri');
       final res = await http.get(uri, headers: headers);
 
-      print('Grades response status: ${res.statusCode}');
-      print('Response body: ${res.body}');
+      debugPrint('📥 Grades response status: ${res.statusCode}');
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
@@ -170,33 +234,45 @@ class AssessmentProvider with ChangeNotifier {
           loaded = List<Map<String, dynamic>>.from(data['data']);
         }
 
-        // Deduplicate by 'id'
+        // Deduplicate by 'id' or 'name' (use whichever is available)
         final seen = <String>{};
         gradesForLevel = loaded.where((grade) {
-          final id = grade['id']?.toString();
+          // Try to use id first, fall back to name
+          final id = grade['id']?.toString() ?? grade['name']?.toString();
           if (id == null || id.isEmpty) return false;
-          return seen.add(id);
+          if (seen.contains(id)) return false;
+          seen.add(id);
+          return true;
         }).toList();
 
-        print('Loaded ${gradesForLevel.length} unique grades');
+        debugPrint('✅ Loaded ${gradesForLevel.length} unique grades from API');
 
-        if (gradesForLevel.isNotEmpty) {
-          print('First grade sample: ${gradesForLevel.first}');
-        }
+        // Cache for offline use
+        await _cacheGrades(schoolLevel, gradesForLevel);
+        gradesError = null;
       } else {
-        print('Failed to load grades - status ${res.statusCode}');
-        print('Response body: ${res.body}');
+        debugPrint('❌ Failed to load grades - status ${res.statusCode}');
+        gradesError = 'API error: ${res.statusCode}';
+        // Keep using cached data if available
+        if (gradesForLevel.isEmpty) {
+          debugPrint('⚠️ No cached grades available either');
+        }
       }
     } catch (e, stack) {
-      print('Fetch grades error: $e');
-      print('Stack trace: $stack');
-      lastError = 'Failed to fetch grades: $e';
+      debugPrint('❌ Fetch grades error: $e');
+      debugPrint('Stack trace: $stack');
+      gradesError = 'Network error: $e';
+      // Keep using cached data
+      if (gradesForLevel.isEmpty) {
+        debugPrint('⚠️ No cached grades available after network error');
+      }
+    } finally {
+      isLoadingGrades = false;
+      notifyListeners();
     }
-
-    notifyListeners();
   }
 
-  // ─── Submission – Offline-first + Queue ─────────────────────────────────────
+  // ─── Submission – Offline-first + Queue ──────────────────────────
   Future<bool> submitAllData(BuildContext context) async {
     isSubmitting = true;
     lastError = null;
@@ -222,6 +298,9 @@ class AssessmentProvider with ChangeNotifier {
 
     try {
       if (isOnlineNow) {
+        // Track if any submission fails
+        bool hasFailure = false;
+
         // 1. Submit Absent Teachers
         for (var r in absentRecords) {
           try {
@@ -237,14 +316,15 @@ class AssessmentProvider with ChangeNotifier {
                 'excuse': r['excuse'],
               }),
             );
-            print('Absent submission: ${res.statusCode}');
+            debugPrint('Absent submission: ${res.statusCode}');
             if (res.statusCode != 201) {
-              throw Exception('Absent failed: ${res.statusCode} - ${res.body}');
+              debugPrint('Absent failed: ${res.statusCode} - ${res.body}');
+              hasFailure = true;
             }
           } catch (e, stack) {
-            print('Absent submission error: $e');
-            print('Stack: $stack');
-            lastError = 'Absent submission failed: $e';
+            debugPrint('Absent submission error: $e');
+            debugPrint('Stack: $stack');
+            hasFailure = true;
           }
         }
 
@@ -266,18 +346,19 @@ class AssessmentProvider with ChangeNotifier {
                 'qualification': r['qualification'].text.trim(),
               }),
             );
-            print('Staff submission: ${res.statusCode}');
+            debugPrint('Staff submission: ${res.statusCode}');
             if (res.statusCode != 201) {
-              throw Exception('Staff failed: ${res.statusCode} - ${res.body}');
+              debugPrint('Staff failed: ${res.statusCode} - ${res.body}');
+              hasFailure = true;
             }
           } catch (e, stack) {
-            print('Staff submission error: $e');
-            print('Stack: $stack');
-            lastError = 'Staff submission failed: $e';
+            debugPrint('Staff submission error: $e');
+            debugPrint('Stack: $stack');
+            hasFailure = true;
           }
         }
 
-        // 3. Submit Required Teachers - FIXED: Added detailed logging
+        // 3. Submit Required Teachers
         if (reqLevel.trim().isNotEmpty) {
           try {
             final payload = {
@@ -290,7 +371,7 @@ class AssessmentProvider with ChangeNotifier {
               'num_req': int.tryParse(reqNumRequired.trim() ?? '0') ?? 0,
             };
 
-            print('Attempting req-teachers POST with payload: ${jsonEncode(payload)}');
+            debugPrint('Attempting req-teachers POST with payload: ${jsonEncode(payload)}');
 
             final res = await http.post(
               Uri.parse('${AppUrl.url}/schools/req-teachers'),
@@ -298,47 +379,22 @@ class AssessmentProvider with ChangeNotifier {
               body: jsonEncode(payload),
             );
 
-            print('Req Teachers response: ${res.statusCode} - ${res.body}');
+            debugPrint('Req Teachers response: ${res.statusCode} - ${res.body}');
 
             if (res.statusCode != 201) {
-              throw Exception('Req Teachers failed: ${res.statusCode} - ${res.body}');
+              debugPrint('Req Teachers failed: ${res.statusCode} - ${res.body}');
+              hasFailure = true;
             }
           } catch (e, stack) {
-            print('Req Teachers submission error: $e');
-            print('Stack: $stack');
-            lastError = 'Required Teachers submission failed: $e';
+            debugPrint('Req Teachers submission error: $e');
+            debugPrint('Stack: $stack');
+            hasFailure = true;
           }
         } else {
-          print('Skipping req-teachers submission: reqLevel is empty');
+          debugPrint('Skipping req-teachers submission: reqLevel is empty');
         }
 
-        // 4. Submit Legacy Verify Students
-        if (verifyClass.trim().isNotEmpty) {
-          try {
-            final res = await http.post(
-              Uri.parse('${AppUrl.url}/schools/verify-students'),
-              headers: headers,
-              body: jsonEncode({
-                'school': schoolCode.trim(),
-                'classes': verifyClass.trim(),
-                'emis_male': int.tryParse(emisMale.trim() ?? '0') ?? 0,
-                'count_male': int.tryParse(countMale.trim() ?? '0') ?? 0,
-                'emis_female': int.tryParse(emisFemale.trim() ?? '0') ?? 0,
-                'count_female': int.tryParse(countFemale.trim() ?? '0') ?? 0,
-              }),
-            );
-            print('Legacy Verify: ${res.statusCode}');
-            if (res.statusCode != 201) {
-              throw Exception('Legacy Verify failed: ${res.statusCode} - ${res.body}');
-            }
-          } catch (e, stack) {
-            print('Legacy Verify submission error: $e');
-            print('Stack: $stack');
-            lastError = 'Legacy Verify submission failed: $e';
-          }
-        }
-
-        // 5. Submit Dynamic Verify Students
+        // 4. Submit Dynamic Verify Students
         for (var r in verifyStudentRecords) {
           try {
             final gradeId = r['classGrade']?.toString() ?? '';
@@ -353,7 +409,7 @@ class AssessmentProvider with ChangeNotifier {
               'count_female': int.tryParse(r['countFemale'].text.trim() ?? '0') ?? 0,
             };
 
-            print('Sending verify row: ${jsonEncode(payload)}');
+            debugPrint('Sending verify row: ${jsonEncode(payload)}');
 
             final res = await http.post(
               Uri.parse('${AppUrl.url}/schools/verify-students'),
@@ -361,19 +417,20 @@ class AssessmentProvider with ChangeNotifier {
               body: jsonEncode(payload),
             );
 
-            print('Verify row response: ${res.statusCode} - ${res.body}');
+            debugPrint('Verify row response: ${res.statusCode} - ${res.body}');
 
             if (res.statusCode != 201) {
-              throw Exception('Verify row failed: ${res.statusCode} - ${res.body}');
+              debugPrint('Verify row failed: ${res.statusCode} - ${res.body}');
+              hasFailure = true;
             }
           } catch (e, stack) {
-            print('Dynamic Verify submission error: $e');
-            print('Stack: $stack');
-            lastError = 'Dynamic Verify submission failed: $e';
+            debugPrint('Dynamic Verify submission error: $e');
+            debugPrint('Stack: $stack');
+            hasFailure = true;
           }
         }
 
-        // 6. Submit Fees
+        // 5. Submit Fees
         for (var r in feeRecords) {
           try {
             final amount = double.tryParse(r['amount'].text.trim() ?? '0') ?? 0.0;
@@ -388,22 +445,32 @@ class AssessmentProvider with ChangeNotifier {
                 'amount': amount,
               }),
             );
-            print('Fee submission: ${res.statusCode}');
+            debugPrint('Fee submission: ${res.statusCode}');
             if (res.statusCode != 201) {
-              throw Exception('Fee failed: ${res.statusCode} - ${res.body}');
+              debugPrint('Fee failed: ${res.statusCode} - ${res.body}');
+              hasFailure = true;
             }
           } catch (e, stack) {
-            print('Fee submission error: $e');
-            print('Stack: $stack');
-            lastError = 'Fee submission failed: $e';
+            debugPrint('Fee submission error: $e');
+            debugPrint('Stack: $stack');
+            hasFailure = true;
           }
         }
 
-        // All good
+        // If any failures occurred, save to pending for retry
+        if (hasFailure) {
+          final payload = _buildAssessmentPayload();
+          await LocalStorageService.savePendingAssessment(payload);
+          lastOffline = true;
+          return true;
+        }
+
+        // All good - sync any pending from previous sessions
         await _syncPendingAssessments(context);
         lastOffline = false;
         return true;
       } else {
+        // Offline: Save to pending queue
         final payload = _buildAssessmentPayload();
         await LocalStorageService.savePendingAssessment(payload);
         lastOffline = true;
@@ -481,7 +548,7 @@ class AssessmentProvider with ChangeNotifier {
     };
   }
 
-  // ─── Sync pending assessments ───────────────────────────────────────────────
+  // ─── Modified: Sync pending assessments with better error handling ─────────
   Future<void> _syncPendingAssessments(BuildContext context) async {
     final pending = LocalStorageService.getPendingAssessments();
     if (pending.isEmpty) return;
@@ -499,119 +566,154 @@ class AssessmentProvider with ChangeNotifier {
       'Accept': 'application/json',
     };
 
+    List<Map<String, dynamic>> failedSyncs = [];
+
     for (var assessment in pending) {
       try {
         final school = assessment['schoolCode'] ?? assessment['schoolName'] ?? 'unknown';
+        bool hasFailure = false;
 
         // Absent
         for (var r in assessment['absentRecords'] ?? []) {
-          final res = await http.post(
-            Uri.parse('${AppUrl.url}/schools/absents'),
-            headers: headers,
-            body: jsonEncode({
-              ...r,
-              'school': school,
-            }),
-          );
-          if (res.statusCode != 201) {
-            debugPrint('Pending absent sync failed: ${res.body}');
-            continue;
+          try {
+            final res = await http.post(
+              Uri.parse('${AppUrl.url}/schools/absents'),
+              headers: headers,
+              body: jsonEncode({
+                ...r,
+                'school': school,
+              }),
+            );
+            if (res.statusCode != 201) {
+              debugPrint('Pending absent sync failed: ${res.body}');
+              hasFailure = true;
+            }
+          } catch (e) {
+            debugPrint('Pending absent sync error: $e');
+            hasFailure = true;
           }
         }
 
         // Staff
         for (var r in assessment['staffRecords'] ?? []) {
-          final res = await http.post(
-            Uri.parse('${AppUrl.url}/schools/staff'),
-            headers: headers,
-            body: jsonEncode({
-              ...r,
-              'school': school,
-            }),
-          );
-          if (res.statusCode != 201) {
-            debugPrint('Pending staff sync failed: ${res.body}');
-            continue;
+          try {
+            final res = await http.post(
+              Uri.parse('${AppUrl.url}/schools/staff'),
+              headers: headers,
+              body: jsonEncode({
+                ...r,
+                'school': school,
+              }),
+            );
+            if (res.statusCode != 201) {
+              debugPrint('Pending staff sync failed: ${res.body}');
+              hasFailure = true;
+            }
+          } catch (e) {
+            debugPrint('Pending staff sync error: $e');
+            hasFailure = true;
           }
         }
 
-        // Required Teachers - with debug logging
+        // Required Teachers
         final req = assessment['reqTeachers'] ?? {};
         if (req['level']?.toString().trim().isNotEmpty ?? false) {
-          print('Syncing pending req-teachers with level: ${req['level']}');
-          final res = await http.post(
-            Uri.parse('${AppUrl.url}/schools/req-teachers'),
-            headers: headers,
-            body: jsonEncode({
-              ...req,
-              'school': school,
-            }),
-          );
-          print('Pending req-teachers response: ${res.statusCode} - ${res.body}');
-          if (res.statusCode != 201) {
-            debugPrint('Pending req-teachers sync failed: ${res.body}');
-          }
-        } else {
-          print('Skipping pending req-teachers: level is empty');
-        }
-
-        // Verify Students - legacy single object
-        final verify = assessment['verifyStudents'] ?? {};
-        if (verify['class']?.toString().trim().isNotEmpty ?? false) {
-          final res = await http.post(
-            Uri.parse('${AppUrl.url}/schools/verify-students'),
-            headers: headers,
-            body: jsonEncode({
-              ...verify,
-              'school': school,
-            }),
-          );
-          if (res.statusCode != 201) {
-            debugPrint('Pending verify-students sync failed: ${res.body}');
+          try {
+            debugPrint('Syncing pending req-teachers with level: ${req['level']}');
+            final res = await http.post(
+              Uri.parse('${AppUrl.url}/schools/req-teachers'),
+              headers: headers,
+              body: jsonEncode({
+                ...req,
+                'school': school,
+              }),
+            );
+            debugPrint('Pending req-teachers response: ${res.statusCode} - ${res.body}');
+            if (res.statusCode != 201) {
+              debugPrint('Pending req-teachers sync failed: ${res.body}');
+              hasFailure = true;
+            }
+          } catch (e) {
+            debugPrint('Pending req-teachers sync error: $e');
+            hasFailure = true;
           }
         }
 
         // Verify Students - dynamic rows
         for (var r in assessment['verifyStudentRecords'] ?? []) {
-          final res = await http.post(
-            Uri.parse('${AppUrl.url}/schools/verify-students'),
-            headers: headers,
-            body: jsonEncode({
-              ...r,
-              'school': school,
-            }),
-          );
-          if (res.statusCode != 201) {
-            debugPrint('Pending verify-student row sync failed: ${res.body}');
+          try {
+            final res = await http.post(
+              Uri.parse('${AppUrl.url}/schools/verify-students'),
+              headers: headers,
+              body: jsonEncode({
+                ...r,
+                'school': school,
+              }),
+            );
+            if (res.statusCode != 201) {
+              debugPrint('Pending verify-student row sync failed: ${res.body}');
+              hasFailure = true;
+            }
+          } catch (e) {
+            debugPrint('Pending verify-student row sync error: $e');
+            hasFailure = true;
           }
         }
 
         // Fees
         for (var r in assessment['feeRecords'] ?? []) {
-          final res = await http.post(
-            Uri.parse('${AppUrl.url}/schools/fees-paid'),
-            headers: headers,
-            body: jsonEncode({
-              ...r,
-              'school': school,
-            }),
-          );
-          if (res.statusCode != 201) {
-            debugPrint('Pending fee sync failed: ${res.body}');
-            continue;
+          try {
+            final res = await http.post(
+              Uri.parse('${AppUrl.url}/schools/fees-paid'),
+              headers: headers,
+              body: jsonEncode({
+                ...r,
+                'school': school,
+              }),
+            );
+            if (res.statusCode != 201) {
+              debugPrint('Pending fee sync failed: ${res.body}');
+              hasFailure = true;
+            }
+          } catch (e) {
+            debugPrint('Pending fee sync error: $e');
+            hasFailure = true;
           }
         }
 
-        await LocalStorageService.removePendingAssessment(assessment);
-        debugPrint('Pending assessment synced and removed');
+        if (!hasFailure) {
+          await LocalStorageService.removePendingAssessment(assessment);
+          debugPrint('Pending assessment synced and removed');
+        } else {
+          failedSyncs.add(assessment);
+        }
       } catch (e, stack) {
         debugPrint('Full pending assessment sync error: $e');
         debugPrint('Stack: $stack');
-        // Keep failed items for next retry
+        failedSyncs.add(assessment);
       }
+    }
+
+    // Update pending queue with failed items only
+    if (failedSyncs.isNotEmpty) {
+      await LocalStorageService.saveFailedSyncs(failedSyncs);
     }
   }
 
+  // ─── Manual retry for failed syncs ────────────────────────────────────────
+  Future<void> retryFailedSyncs(BuildContext context) async {
+    final isOnline = await LocalStorageService.isOnline();
+    if (!isOnline) return;
+
+    await _syncPendingAssessments(context);
+  }
+
+  // ─── Get pending count ────────────────────────────────────────────────────
+  int getPendingCount() {
+    return LocalStorageService.getPendingAssessments().length;
+  }
+
+  // ─── Reset all data ───────────────────────────────────────────────────────
   void reset() {
     absentRecords.clear();
     staffRecords.clear();
@@ -629,6 +731,8 @@ class AssessmentProvider with ChangeNotifier {
     emisFemale = '';
     countFemale = '';
     gradesForLevel.clear();
+    isLoadingGrades = false;
+    gradesError = null;
     notifyListeners();
   }
 }

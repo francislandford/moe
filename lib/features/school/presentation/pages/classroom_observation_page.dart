@@ -6,9 +6,9 @@ import 'dart:convert';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_url.dart';
-import '../../../../core/services/local_storage_service.dart';
 import '../../../../core/widgets/custom_app_bar.dart';
 import '../../../../core/widgets/loading_overlay.dart';
+import '../../../../core/services/local_storage_service.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 
 class ClassroomObservationPage extends StatefulWidget {
@@ -19,34 +19,30 @@ class ClassroomObservationPage extends StatefulWidget {
 }
 
 class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
-  bool _isLoading = false;               // for questions fetch
-  bool _isFetchingDropdowns = false;     // for grades/subjects fetch
+  bool _isLoading = false;
+  bool _isFetchingDropdowns = false;
   bool _isSubmitting = false;
-
   String? _schoolName;
   String? _schoolCode;
   String? _schoolLevel;
-
   int _selectedClassNum = 1;
   final TextEditingController _teacherController = TextEditingController();
-
   List<Map<String, dynamic>> _grades = [];
   List<Map<String, dynamic>> _subjects = [];
-
   String? _selectedGrade;
   String? _selectedSubject;
-
-  // New fields for number of boys and girls in one row
   final TextEditingController _nbMaleController = TextEditingController();
   final TextEditingController _nbFemaleController = TextEditingController();
-
   List<Map<String, dynamic>> _questions = [];
   Map<String, int?> _scores = {};
 
   @override
   void initState() {
     super.initState();
-    _fetchQuestions();
+    // Load from cache first (offline-first)
+    _loadFromCache();
+    // Then refresh if online (background)
+    _refreshDataIfOnline();
   }
 
   @override
@@ -61,9 +57,7 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
     _schoolCode ??= 'N/A';
     _schoolLevel ??= 'ECE';
 
-    if (mounted) {
-      _fetchDropdowns();
-    }
+    if (mounted) setState(() {});
   }
 
   @override
@@ -74,85 +68,63 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
     super.dispose();
   }
 
-  Future<void> _fetchDropdowns() async {
-    if (!mounted || _schoolLevel == null) return;
-    if (_grades.isNotEmpty && _subjects.isNotEmpty) return;
+  // Load questions, grades, subjects from cache (offline-first)
+  void _loadFromCache() {
+    // Questions
+    final questionsCached = LocalStorageService.getFromCache('classroom_questions');
+    if (questionsCached != null && questionsCached is List) {
+      _questions = questionsCached.asMap().entries.map((entry) {
+        final index = entry.key;
+        final item = entry.value;
+        return {
+          'number': (index + 1).toString(),
+          'id': item['id'].toString(),
+          'name': item['name'].toString(),
+        };
+      }).toList();
 
-    setState(() => _isFetchingDropdowns = true);
-
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    final headers = auth.getAuthHeaders();
-
-    try {
-      print('Fetching dropdowns for level: $_schoolLevel');
-
-      // Grades
-      final gradeRes = await http.get(
-        Uri.parse('${AppUrl.url}/level/grades?level=$_schoolLevel'),
-        headers: headers,
-      );
-      print('Grades response: ${gradeRes.statusCode}');
-
-      if (gradeRes.statusCode == 200) {
-        final List<dynamic> gradeList = jsonDecode(gradeRes.body);
-        if (mounted) {
-          setState(() {
-            _grades = gradeList.map((e) => {
-              'id': e['id']?.toString(),
-              'name': e['name']?.toString() ?? 'Unnamed',
-              'code': e['code']?.toString() ?? e['id']?.toString(),
-            }).toList();
-          });
-        }
-      }
-
-      // Subjects
-      final subjectRes = await http.get(
-        Uri.parse('${AppUrl.url}/level/subjects?level=$_schoolLevel'),
-        headers: headers,
-      );
-      print('Subjects response: ${subjectRes.statusCode}');
-
-      if (subjectRes.statusCode == 200) {
-        final List<dynamic> subjectList = jsonDecode(subjectRes.body);
-        if (mounted) {
-          setState(() {
-            _subjects = subjectList.map((s) => {
-              'id': s['id']?.toString(),
-              'name': s['name']?.toString() ?? 'Unnamed',
-            }).toList();
-          });
-        }
-      }
-    } catch (e) {
-      print('Dropdown fetch error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading dropdowns: $e'), backgroundColor: Colors.red),
-        );
+      // Re-init scores from cache
+      for (var q in _questions) {
+        _scores[q['id']!] = null;
       }
     }
 
-    if (mounted) {
-      setState(() => _isFetchingDropdowns = false);
+    // Grades
+    final gradesCached = LocalStorageService.getFromCache('classroom_grades');
+    if (gradesCached != null && gradesCached is List) {
+      _grades = gradesCached.map((e) => {
+        'id': e['id']?.toString(),
+        'name': e['name']?.toString() ?? 'Unnamed',
+        'code': e['code']?.toString() ?? e['id']?.toString(),
+      }).toList();
     }
+
+    // Subjects
+    final subjectsCached = LocalStorageService.getFromCache('classroom_subjects');
+    if (subjectsCached != null && subjectsCached is List) {
+      _subjects = subjectsCached.map((s) => {
+        'id': s['id']?.toString(),
+        'name': s['name']?.toString() ?? 'Unnamed',
+      }).toList();
+    }
+
+    if (mounted) setState(() {});
   }
 
-  Future<void> _fetchQuestions() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
+  // Refresh questions, grades & subjects only if online (background)
+  Future<void> _refreshDataIfOnline() async {
+    final isOnline = await LocalStorageService.isOnline();
+    if (!isOnline) return;
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final headers = auth.getAuthHeaders();
 
+    // Refresh questions
     try {
-      print('Fetching classroom observation questions...');
       final qRes = await http.get(
         Uri.parse('${AppUrl.url}/questions?cat=Classroom Observation'),
         headers: headers,
       );
-
-      print('Questions response: ${qRes.statusCode}');
 
       if (qRes.statusCode == 200) {
         final List<dynamic> list = jsonDecode(qRes.body);
@@ -168,26 +140,67 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
               };
             }).toList();
 
-            _scores.clear();
+            // Update scores (preserve existing answers if possible)
             for (var q in _questions) {
-              _scores[q['id']!] = null;
+              if (!_scores.containsKey(q['id'])) {
+                _scores[q['id']!] = null;
+              }
             }
           });
+
+          await LocalStorageService.saveToCache('classroom_questions', list);
         }
-      } else {
-        throw Exception('Failed to load questions: ${qRes.statusCode}');
       }
     } catch (e) {
-      print('Fetch questions error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading questions: $e'), backgroundColor: Colors.red),
-        );
-      }
+      print('Background refresh classroom questions failed: $e');
     }
 
-    if (mounted) {
-      setState(() => _isLoading = false);
+    // Refresh grades & subjects (only if level is known)
+    if (_schoolLevel != null) {
+      try {
+        // Grades
+        final gradeRes = await http.get(
+          Uri.parse('${AppUrl.url}/level/grades?level=$_schoolLevel'),
+          headers: headers,
+        );
+
+        if (gradeRes.statusCode == 200) {
+          final List<dynamic> gradeList = jsonDecode(gradeRes.body);
+          if (mounted) {
+            setState(() {
+              _grades = gradeList.map((e) => {
+                'id': e['id']?.toString(),
+                'name': e['name']?.toString() ?? 'Unnamed',
+                'code': e['code']?.toString() ?? e['id']?.toString(),
+              }).toList();
+            });
+
+            await LocalStorageService.saveToCache('classroom_grades', gradeList);
+          }
+        }
+
+        // Subjects
+        final subjectRes = await http.get(
+          Uri.parse('${AppUrl.url}/level/subjects?level=$_schoolLevel'),
+          headers: headers,
+        );
+
+        if (subjectRes.statusCode == 200) {
+          final List<dynamic> subjectList = jsonDecode(subjectRes.body);
+          if (mounted) {
+            setState(() {
+              _subjects = subjectList.map((s) => {
+                'id': s['id']?.toString(),
+                'name': s['name']?.toString() ?? 'Unnamed',
+              }).toList();
+            });
+
+            await LocalStorageService.saveToCache('classroom_subjects', subjectList);
+          }
+        }
+      } catch (e) {
+        print('Background refresh grades/subjects failed: $e');
+      }
     }
   }
 
@@ -222,8 +235,8 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
       'grade': _selectedGrade,
       'subject': _selectedSubject,
       'teacher': _teacherController.text.trim(),
-      'nb_male': int.tryParse(_nbMaleController.text.trim() ?? '0') ?? 0,      // NEW: nb_male
-      'nb_female': int.tryParse(_nbFemaleController.text.trim() ?? '0') ?? 0, // NEW: nb_female
+      'nb_male': int.tryParse(_nbMaleController.text.trim() ?? '0') ?? 0,
+      'nb_female': int.tryParse(_nbFemaleController.text.trim() ?? '0') ?? 0,
       'scores': cleanScores,
     };
 
@@ -235,7 +248,6 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
 
     try {
       final isOnline = await LocalStorageService.isOnline();
-      print('Online: $isOnline');
 
       if (isOnline) {
         final res = await http.post(
@@ -243,8 +255,6 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
           headers: headers,
           body: jsonEncode(payload),
         );
-
-        print('Response: ${res.statusCode} - ${res.body}');
 
         if (res.statusCode == 200 || res.statusCode == 201) {
           message = 'Classroom $_selectedClassNum observation saved successfully!';
@@ -377,10 +387,7 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
                 child: LoadingOverlay(
                   isLoading: _isLoading || _isFetchingDropdowns,
                   child: RefreshIndicator(
-                    onRefresh: () async {
-                      await _fetchQuestions();
-                      await _fetchDropdowns();
-                    },
+                    onRefresh: _refreshDataIfOnline,
                     child: SingleChildScrollView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16.0),
@@ -400,7 +407,6 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
                                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                                   ),
                                   const SizedBox(height: 16),
-
                                   DropdownButtonFormField<int>(
                                     value: _selectedClassNum,
                                     decoration: const InputDecoration(labelText: 'Classroom Number *'),
@@ -410,25 +416,18 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
                                     onChanged: (v) => setState(() => _selectedClassNum = v!),
                                     validator: (v) => v == null ? 'Required' : null,
                                   ),
-
                                   const SizedBox(height: 16),
-
                                   TextFormField(
                                     controller: _teacherController,
                                     decoration: const InputDecoration(labelText: 'Teacher Name *'),
                                     validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
                                   ),
-
                                   const SizedBox(height: 16),
-
                                   // Grade Dropdown
                                   if (_isFetchingDropdowns)
                                     const Center(child: CircularProgressIndicator())
                                   else if (_grades.isEmpty)
-                                    const Text(
-                                      'No grades available for this level',
-                                      style: TextStyle(color: Colors.grey),
-                                    )
+                                    const Text('No grades available for this level', style: TextStyle(color: Colors.grey))
                                   else
                                     DropdownButtonFormField<String>(
                                       value: _selectedGrade,
@@ -447,17 +446,12 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
                                       onChanged: (value) => setState(() => _selectedGrade = value),
                                       validator: (v) => v == null ? 'Required' : null,
                                     ),
-
                                   const SizedBox(height: 16),
-
                                   // Subject Dropdown
                                   if (_isFetchingDropdowns)
                                     const SizedBox.shrink()
                                   else if (_subjects.isEmpty)
-                                    const Text(
-                                      'No subjects available',
-                                      style: TextStyle(color: Colors.grey),
-                                    )
+                                    const Text('No subjects available', style: TextStyle(color: Colors.grey))
                                   else
                                     DropdownButtonFormField<String>(
                                       value: _selectedSubject,
@@ -476,9 +470,7 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
                                       onChanged: (value) => setState(() => _selectedSubject = value),
                                       validator: (v) => v == null ? 'Required' : null,
                                     ),
-
                                   const SizedBox(height: 16),
-
                                   // New row: Number of Male and Female students
                                   Row(
                                     children: [
@@ -520,10 +512,8 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
                           ),
                           const SizedBox(height: 16),
 
-                          if (_questions.isEmpty && !_isLoading)
-                            const Center(child: Text('No questions loaded. Pull down to refresh.'))
-                          else if (_questions.isEmpty)
-                            const Center(child: CircularProgressIndicator())
+                          if (_questions.isEmpty)
+                            const Center(child: Text('No questions available offline. Connect to internet to load.'))
                           else
                             ListView.builder(
                               shrinkWrap: true,

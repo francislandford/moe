@@ -26,9 +26,67 @@ class _MySchoolsPageState extends State<MySchoolsPage> {
   @override
   void initState() {
     super.initState();
-    _fetchMySchools();
+    // Load from cache first (offline-first)
+    _loadFromCache();
+    // Then silently refresh if online (background)
+    _refreshSchoolsIfOnline();
   }
 
+  // Load schools from cache (offline-first) — always first
+  void _loadFromCache() {
+    final cachedSchools = LocalStorageService.getFromCache('my_schools');
+    if (cachedSchools != null && cachedSchools is List) {
+      _schools = cachedSchools.map((s) => Map<String, dynamic>.from(s)).toList();
+    }
+
+    if (mounted) setState(() {});
+  }
+
+  // Refresh schools silently if online (background, no blocking UI)
+  Future<void> _refreshSchoolsIfOnline() async {
+    final isOnline = await LocalStorageService.isOnline();
+    if (!isOnline) return;
+
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    if (!auth.isAuthenticated || auth.token == null) {
+      // Log error but don't show to user
+      print('Auth error during background refresh');
+      return;
+    }
+
+    final headers = auth.getAuthHeaders();
+
+    try {
+      print('Refreshing my schools from API (background)...');
+      final res = await http.get(
+        Uri.parse('${AppUrl.url}/my-schools'),
+        headers: headers,
+      );
+
+      print('My Schools response: ${res.statusCode}');
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final List<dynamic> schoolList = data['data'] ?? [];
+
+        if (mounted) {
+          setState(() {
+            _schools = schoolList.map((s) => Map<String, dynamic>.from(s)).toList();
+            _errorMessage = null;
+          });
+
+          // Cache fresh data
+          await LocalStorageService.saveToCache('my_schools', schoolList);
+        }
+      }
+    } catch (e) {
+      // Log error but don't show to user
+      print('Background refresh failed: $e → keeping existing cache');
+      // No error message shown to user
+    }
+  }
+
+  // Pull-to-refresh — full refresh (only called when user pulls)
   Future<void> _fetchMySchools() async {
     if (!mounted) return;
 
@@ -66,24 +124,34 @@ class _MySchoolsPageState extends State<MySchoolsPage> {
           if (mounted) {
             setState(() {
               _schools = schoolList.map((s) => Map<String, dynamic>.from(s)).toList();
+              _errorMessage = null;
             });
+
+            await LocalStorageService.saveToCache('my_schools', schoolList);
           }
         } else {
-          throw Exception('Failed to load schools: ${res.statusCode} - ${res.body}');
+          // Log error but don't show detailed message to user
+          print('Failed to load schools: ${res.statusCode}');
+          if (mounted && _schools.isEmpty) {
+            setState(() {
+              _errorMessage = 'Unable to load schools. Please try again.';
+            });
+          }
         }
       } else {
+        // Offline: already loaded from cache
         if (mounted) {
           setState(() {
-            _errorMessage = 'Offline mode — showing cached or pending schools (not implemented yet)';
-            _schools = [];
+            _errorMessage = 'Offline mode — showing cached schools';
           });
         }
       }
     } catch (e) {
+      // Log error but don't show to user
       print('My Schools fetch error: $e');
-      if (mounted) {
+      if (mounted && _schools.isEmpty) {
         setState(() {
-          _errorMessage = 'Error loading schools: $e';
+          _errorMessage = 'Unable to load schools. Please check your connection.';
         });
       }
     } finally {
@@ -93,7 +161,8 @@ class _MySchoolsPageState extends State<MySchoolsPage> {
     }
   }
 
-  void _openSchoolInfoModal(Map<String, dynamic> school) {
+  // SINGLE modal method (no duplicates)
+  void _showSchoolModal(Map<String, dynamic> school) {
     showDialog(
       context: context,
       builder: (context) {
@@ -172,7 +241,7 @@ class _MySchoolsPageState extends State<MySchoolsPage> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.add_circle, color: Colors.white, size: 40,),
+            icon: const Icon(Icons.add_circle, color: Colors.white, size: 40),
             onPressed: () => context.go('/sample-dashboard'),
           ),
         ],
@@ -300,7 +369,7 @@ class _MySchoolsPageState extends State<MySchoolsPage> {
             leading: CircleAvatar(
               backgroundColor: AppColors.primary.withOpacity(0.2),
               child: const Icon(
-                Icons.school_rounded, // ← Changed from text (first letter) to school icon
+                Icons.school_rounded,
                 color: AppColors.primary,
               ),
             ),
@@ -318,76 +387,10 @@ class _MySchoolsPageState extends State<MySchoolsPage> {
               ],
             ),
             trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-            onTap: () => _showSchoolDetailsModal(school),
+            onTap: () => _showSchoolModal(school),
           ),
         );
       },
-    );
-  }
-
-  void _showSchoolDetailsModal(Map<String, dynamic> school) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(school['school_name'] ?? 'Unnamed School'),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _detailInfoRow('School Code', school['school_code'] ?? 'N/A'),
-                _detailInfoRow('Level', school['school_level'] ?? 'N/A'),
-                _detailInfoRow('County', school['county'] ?? 'N/A'),
-                _detailInfoRow('District', school['district'] ?? 'N/A'),
-                _detailInfoRow('Community', school['community'] ?? 'N/A'),
-                _detailInfoRow('Principal', school['principal_name'] ?? 'N/A'),
-                _detailInfoRow('Contact', school['school_contact'] ?? 'N/A'),
-                _detailInfoRow('Email', school['email'] ?? 'N/A'),
-                _detailInfoRow('Year Established', school['year_establish']?.toString() ?? 'N/A'),
-                _detailInfoRow('Permit Status', school['permit'] ?? 'N/A'),
-                _detailInfoRow('Permit Number', school['permit_num'] ?? 'N/A'),
-                _detailInfoRow('TVET', school['tvet'] == 1 ? 'Yes' : 'No'),
-                _detailInfoRow('Accelerated', school['accelerated'] == 1 ? 'Yes' : 'No'),
-                _detailInfoRow('Alternative', school['alternative'] == 1 ? 'Yes' : 'No'),
-                _detailInfoRow('All Teachers Present', school['all_teacher_present'] ?? 'N/A'),
-                _detailInfoRow('Verification Comment', school['verify_comment'] ?? 'N/A'),
-                _detailInfoRow('Charges Fees', school['charge_fees'] ?? 'N/A'),
-                _detailInfoRow('Latitude', school['latitude']?.toString() ?? 'N/A'),
-                _detailInfoRow('Longitude', school['longitude']?.toString() ?? 'N/A'),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
-            ),
-          ],
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        );
-      },
-    );
-  }
-
-  Widget _detailInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 140,
-            child: Text(
-              label,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-          Expanded(
-            child: Text(value),
-          ),
-        ],
-      ),
     );
   }
 }

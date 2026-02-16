@@ -6,10 +6,10 @@ import 'dart:convert';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_url.dart';
-import '../../../../core/services/local_storage_service.dart';
-import '../../../../core/services/textbooks_teaching_local_storage.dart';
 import '../../../../core/widgets/custom_app_bar.dart';
 import '../../../../core/widgets/loading_overlay.dart';
+import '../../../../core/services/local_storage_service.dart';
+import '../../../../core/services/textbooks_teaching_local_storage.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 
 class TextbooksTeachingPage extends StatefulWidget {
@@ -22,18 +22,23 @@ class TextbooksTeachingPage extends StatefulWidget {
 class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
   bool _isLoading = false;
   bool _isSubmitting = false;
-
   String? _schoolName;
   String? _schoolCode;
   String? _schoolLevel;
 
+  // Scored questions
   List<Map<String, dynamic>> _questions = [];
-  Map<String, int?> _scores = {}; // now stores 0, 1, or 2
+
+  // Combined scores
+  Map<String, int?> _scores = {};
 
   @override
   void initState() {
     super.initState();
-    _fetchQuestions();
+    // Load from cache first (offline-first)
+    _loadFromCache();
+    // Then refresh if online (background)
+    _refreshQuestionsIfOnline();
   }
 
   @override
@@ -51,21 +56,43 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _fetchQuestions() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
+  // Load questions from cache (offline-first)
+  void _loadFromCache() {
+    final cachedList = LocalStorageService.getFromCache('textbooks_questions');
+    if (cachedList != null && cachedList is List) {
+      _questions = cachedList.asMap().entries.map((entry) {
+        final index = entry.key;
+        final item = entry.value;
+        return {
+          'number': (index + 1).toString(),
+          'id': item['id'].toString(),
+          'name': item['name'].toString(),
+        };
+      }).toList();
+
+      // Re-init scores from cache
+      for (var q in _questions) {
+        _scores[q['id']!] = null;
+      }
+    }
+
+    if (mounted) setState(() {});
+  }
+
+  // Refresh questions only if online (background)
+  Future<void> _refreshQuestionsIfOnline() async {
+    final isOnline = await LocalStorageService.isOnline();
+    if (!isOnline) return;
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final headers = auth.getAuthHeaders();
 
     try {
-      print('Fetching textbooks & teaching materials questions...');
+      print('Refreshing textbooks & teaching materials questions from API...');
       final qRes = await http.get(
         Uri.parse('${AppUrl.url}/questions?cat=Textbooks'),
         headers: headers,
       );
-
-      print('Response: ${qRes.statusCode}');
 
       if (qRes.statusCode == 200) {
         final List<dynamic> list = jsonDecode(qRes.body);
@@ -81,25 +108,21 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
               };
             }).toList();
 
-            _scores.clear();
+            // Update scores (preserve existing answers if possible)
             for (var q in _questions) {
-              _scores[q['id']!] = null;
+              if (!_scores.containsKey(q['id'])) {
+                _scores[q['id']!] = null;
+              }
             }
           });
+
+          // Cache fresh data
+          await LocalStorageService.saveToCache('textbooks_questions', list);
         }
-      } else {
-        throw Exception('Failed to load questions: ${qRes.statusCode}');
       }
     } catch (e) {
-      print('Fetch error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading questions: $e'), backgroundColor: Colors.red),
-        );
-      }
+      print('Background refresh textbooks questions failed: $e');
     }
-
-    if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _submit() async {
@@ -119,7 +142,7 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
     if (!auth.isAuthenticated || auth.token == null) {
-      _handleEnd('Not authenticated', Colors.red, false);
+      _handleEnd('Not authenticated', Colors.red);
       return;
     }
 
@@ -140,11 +163,8 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
     String message = 'Unknown status';
     Color color = Colors.grey;
 
-    bool wasOffline = false;
-
     try {
       final isOnline = await LocalStorageService.isOnline();
-      print('Online: $isOnline');
 
       if (isOnline) {
         final res = await http.post(
@@ -153,13 +173,10 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
           body: jsonEncode(payload),
         );
 
-        print('Response: ${res.statusCode} - ${res.body}');
-
         if (res.statusCode == 200 || res.statusCode == 201) {
           message = 'Textbooks & teaching materials assessment saved successfully!';
           color = Colors.green;
           await TextbooksTeachingLocalStorageService.syncPending(headers);
-          wasOffline = false;
         } else {
           message = 'Server error: ${res.statusCode} - ${res.body}';
           color = Colors.red;
@@ -168,7 +185,6 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
         await TextbooksTeachingLocalStorageService.savePending(payload);
         message = 'Saved offline — will sync when online';
         color = Colors.orange;
-        wasOffline = true;
       }
     } catch (e) {
       print('Submit error: $e');
@@ -179,16 +195,15 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
         await TextbooksTeachingLocalStorageService.savePending(payload);
         message = 'Saved offline due to error — will retry later';
         color = Colors.orange;
-        wasOffline = true;
       } catch (hiveErr) {
         print('Hive failed: $hiveErr');
       }
     }
 
-    _handleEnd(message, color, wasOffline);
+    _handleEnd(message, color);
   }
 
-  void _handleEnd(String message, Color color, bool wasOffline) {
+  void _handleEnd(String message, Color color) {
     if (!mounted) return;
 
     setState(() {
@@ -210,7 +225,7 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
           context.go(
             '/assessment-complete',
             extra: {
-              'isOffline': wasOffline,
+              'isOffline': color == Colors.orange,
               'schoolName': _schoolName,
             },
           );
@@ -264,7 +279,7 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
                 child: LoadingOverlay(
                   isLoading: _isLoading,
                   child: RefreshIndicator(
-                    onRefresh: _fetchQuestions,
+                    onRefresh: _refreshQuestionsIfOnline,
                     child: SingleChildScrollView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16.0),
@@ -288,9 +303,7 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
                                     style: TextStyle(
                                       fontSize: 24,
                                       fontWeight: FontWeight.bold,
-                                      color: theme.brightness == Brightness.dark
-                                          ? Colors.white
-                                          : Colors.black87,
+                                      color: theme.brightness == Brightness.dark ? Colors.white : Colors.black87,
                                     ),
                                   ),
                                   const SizedBox(height: 12),
@@ -299,9 +312,7 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
                                     style: TextStyle(
                                       fontSize: 16,
                                       height: 1.5,
-                                      color: theme.brightness == Brightness.dark
-                                          ? Colors.grey[300]
-                                          : Colors.grey[800],
+                                      color: theme.brightness == Brightness.dark ? Colors.grey[300] : Colors.grey[800],
                                     ),
                                   ),
                                 ],
@@ -320,10 +331,8 @@ class _TextbooksTeachingPageState extends State<TextbooksTeachingPage> {
                           ),
                           const SizedBox(height: 16),
 
-                          if (_questions.isEmpty && !_isLoading)
-                            const Center(child: Text('No questions loaded. Pull down to refresh.'))
-                          else if (_questions.isEmpty)
-                            const Center(child: CircularProgressIndicator())
+                          if (_questions.isEmpty)
+                            const Center(child: Text('No questions available offline. Connect to internet to load.'))
                           else
                             ListView.builder(
                               shrinkWrap: true,
