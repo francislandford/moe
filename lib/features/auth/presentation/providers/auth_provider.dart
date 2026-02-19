@@ -25,6 +25,22 @@ class AuthProvider with ChangeNotifier {
   String? get token => _token;
   Map<String, dynamic>? get user => _user;
 
+  // NEW: Get user ID with proper formatting
+  int get userId {
+    // Try to get ID from user object - adjust the key based on your API response
+    if (_user != null) {
+      // Common keys for user ID in API responses
+      if (_user!.containsKey('id')) {
+        return _user!['id'] as int? ?? 0;
+      } else if (_user!.containsKey('user_id')) {
+        return _user!['user_id'] as int? ?? 0;
+      } else if (_user!.containsKey('userId')) {
+        return _user!['userId'] as int? ?? 0;
+      }
+    }
+    return 0;
+  }
+
   // Onboarding flag
   bool _onboardingCompleted = false;
   bool get isOnboardingCompleted => _onboardingCompleted;
@@ -156,5 +172,17 @@ class AuthProvider with ChangeNotifier {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
+  }
+
+  // Optional: Get formatted user ID as string with leading zeros
+  String getFormattedUserId() {
+    final id = userId;
+    if (id < 10) {
+      return '00$id'; // 1 -> 001
+    } else if (id < 100) {
+      return '0$id'; // 23 -> 023
+    } else {
+      return id.toString(); // 123 -> 123
+    }
   }
 }

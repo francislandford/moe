@@ -19,7 +19,6 @@ class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-
   bool _obscurePassword = true;
 
   @override
@@ -42,7 +41,6 @@ class _LoginPageState extends State<LoginPage> {
 
       if (success && mounted) {
         // context.go('/home'); // ← change to your actual dashboard route
-
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Login successful'),
@@ -52,7 +50,6 @@ class _LoginPageState extends State<LoginPage> {
           ),
         );
       } else if (mounted) {
-        // Login returned false → show generic failure message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Login failed. Please check your credentials.'),
@@ -68,15 +65,11 @@ class _LoginPageState extends State<LoginPage> {
       String msg = 'An error occurred. Please try again.';
       final errorStr = e.toString().toLowerCase();
 
-      if (errorStr.contains('401') ||
-          errorStr.contains('422') ||
-          errorStr.contains('invalid credentials') ||
-          errorStr.contains('unauthorized')) {
+      if (errorStr.contains('401') || errorStr.contains('422') ||
+          errorStr.contains('invalid credentials') || errorStr.contains('unauthorized')) {
         msg = 'Invalid email or password.';
-      } else if (errorStr.contains('network') ||
-          errorStr.contains('connection') ||
-          errorStr.contains('socketexception') ||
-          errorStr.contains('timeout')) {
+      } else if (errorStr.contains('network') || errorStr.contains('connection') ||
+          errorStr.contains('socketexception') || errorStr.contains('timeout')) {
         msg = 'Network error. Please check your internet connection.';
       } else if (errorStr.contains('server')) {
         msg = 'Server error. Please try again later.';
@@ -95,9 +88,13 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return Consumer<AuthProvider>(
       builder: (context, auth, child) {
         return Scaffold(
+          backgroundColor: theme.scaffoldBackgroundColor,
           body: LoadingOverlay(
             isLoading: auth.isLoading,
             child: SafeArea(
@@ -109,34 +106,50 @@ class _LoginPageState extends State<LoginPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SizedBox(height: 40),
-
                       Center(
                         child: Column(
                           children: [
-                            Icon(Icons.school_rounded, size: 64, color: AppColors.primary),
+                            Icon(
+                              Icons.school_rounded,
+                              size: 64,
+                              color: AppColors.primary,
+                            ),
                             const SizedBox(height: 16),
                             Text(
                               'School Quality Assessment',
-                              style: AppTextStyles.heading1.copyWith(fontSize: 26, color: AppColors.primaryDark),
+                              style: AppTextStyles.heading1.copyWith(
+                                fontSize: 26,
+                                color: isDark ? Colors.white : AppColors.primaryDark,
+                              ),
                               textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 8),
                             Text(
                               'Liberia Ministry of Education',
-                              style: AppTextStyles.bodyMedium.copyWith(fontSize: 15),
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                fontSize: 15,
+                                color: isDark ? Colors.grey[400] : Colors.grey[800],
+                              ),
                             ),
                           ],
                         ),
                       ),
-
                       const SizedBox(height: 60),
-
-                      Text('Sign In', style: AppTextStyles.heading2.copyWith(fontSize: 28)),
+                      Text(
+                        'Sign In',
+                        style: AppTextStyles.heading2.copyWith(
+                          fontSize: 28,
+                          color: isDark ? Colors.white : Colors.black87,
+                        ),
+                      ),
                       const SizedBox(height: 8),
-                      Text('District Education Officers & Supervisors', style: AppTextStyles.bodyMedium),
-
+                      Text(
+                        'District Education Officers & Supervisors',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          color: isDark ? Colors.grey[400] : Colors.grey[700],
+                        ),
+                      ),
                       const SizedBox(height: 40),
-
                       CustomTextField(
                         controller: _emailController,
                         label: 'Email',
@@ -149,9 +162,7 @@ class _LoginPageState extends State<LoginPage> {
                           return null;
                         },
                       ),
-
                       const SizedBox(height: 24),
-
                       CustomTextField(
                         controller: _passwordController,
                         label: 'Password',
@@ -167,9 +178,7 @@ class _LoginPageState extends State<LoginPage> {
                           return null;
                         },
                       ),
-
                       const SizedBox(height: 16),
-
                       Align(
                         alignment: Alignment.centerRight,
                         child: TextButton(
@@ -178,17 +187,23 @@ class _LoginPageState extends State<LoginPage> {
                               const SnackBar(content: Text('Forgot password – contact support')),
                             );
                           },
-                          child: Text('Forgot password?', style: TextStyle(color: AppColors.primary)),
+                          child: Text(
+                            'Forgot password?',
+                            style: TextStyle(color: AppColors.primary),
+                          ),
                         ),
                       ),
-
                       const SizedBox(height: 32),
-
                       SizedBox(
                         width: double.infinity,
                         height: 56,
                         child: ElevatedButton(
                           onPressed: auth.isLoading ? null : _handleLogin,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
                           child: Text(
                             'Sign In',
                             style: const TextStyle(
@@ -199,13 +214,14 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                         ),
                       ),
-
                       const SizedBox(height: 40),
-
                       Center(
                         child: Text(
                           'Use your official MoE credentials',
-                          style: AppTextStyles.bodyMedium.copyWith(fontSize: 13),
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            fontSize: 13,
+                            color: isDark ? Colors.grey[400] : Colors.grey[700],
+                          ),
                         ),
                       ),
                     ],

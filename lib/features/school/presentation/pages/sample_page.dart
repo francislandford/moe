@@ -12,7 +12,7 @@ class SampleDashboardPage extends StatelessWidget {
   // Sample school data passed to every page
   static const Map<String, dynamic> sampleSchoolData = {
     'schoolName': 'St Francis High School',
-    'schoolCode': '12345098',
+    'schoolCode': 'MOE-188-003',
     'level': 'ECE',
   };
 
@@ -108,12 +108,19 @@ class SampleDashboardPage extends StatelessWidget {
                       //   color: Colors.purple,
                       //   route: '/classroom',
                       // ),
+                      // _buildCard(
+                      //   context: context,
+                      //   icon: Icons.ac_unit_rounded,
+                      //   title: 'Student Participation',
+                      //   color: Colors.purple,
+                      //   route: '/students',
+                      // ),
 
                       // Offline Sections
                       _buildCard(
                         context: context,
                         icon: Icons.cloud_off,
-                        title: 'Offline Students',
+                        title: 'Offline Schools',
                         color: Colors.orange,
                         route: '/offline-students',
                       ),
@@ -155,21 +162,21 @@ class SampleDashboardPage extends StatelessWidget {
                       _buildCard(
                         context: context,
                         icon: Icons.verified_user_sharp,
-                        title: 'Parents Participation',
+                        title: 'Offline Parents Participation',
                         color: Colors.purple,
                         route: '/offline-parent-participation',
                       ),
                       _buildCard(
                         context: context,
                         icon: Icons.verified_user_sharp,
-                        title: 'Students Participation',
+                        title: 'Offline Students Participation',
                         color: Colors.purple,
                         route: '/offline-student-participation',
                       ),
                       _buildCard(
                         context: context,
                         icon: Icons.verified_user_sharp,
-                        title: 'Textbooks & Teaching Materials',
+                        title: 'Offline Textbooks & Teaching Materials',
                         color: Colors.purple,
                         route: '/offline-textbooks-teaching',
                       ),
@@ -212,7 +219,7 @@ class SampleDashboardPage extends StatelessWidget {
           route,
           extra: {
             'schoolName': 'St Francis High School',
-            'schoolCode': '20202020',
+            'schoolCode': 'MOE-188-003',
             'level': 'ECE',
           },
         );

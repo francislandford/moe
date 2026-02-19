@@ -23,13 +23,16 @@ class SchoolAssessmentFormPage extends StatelessWidget {
         provider.schoolName = schoolName ?? 'Unknown School';
         provider.schoolCode = schoolCode ?? '';
         provider.level = schoolLevel ?? 'ECE';
-        // ─── FIXED: Automatically set reqLevel = level (from route) ───────
         provider.reqLevel = provider.level;
 
-        // Load grades from cache first (offline-first), then refresh silently
+        // Load grades, positions, and fees from cache first, then refresh silently
         WidgetsBinding.instance.addPostFrameCallback((_) {
           provider.loadGradesFromCache(provider.level);
+          provider.loadPositionsFromCache();
+          provider.loadFeesFromCache();
           provider.fetchGradesForLevel(provider.level, context);
+          provider.fetchPositions(context);
+          provider.fetchFees(context);
         });
 
         return provider;
@@ -62,27 +65,40 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   final _formKey = GlobalKey<FormState>();
   final _scrollController = ScrollController();
 
-  // Focus nodes for dropdowns that might cause jump
-  final Map<String, FocusNode> _dropdownFocusNodes = {};
-
   @override
   void initState() {
     super.initState();
-    // Load any pending offline assessments count if needed
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
-    _dropdownFocusNodes.values.forEach((node) => node.dispose());
     super.dispose();
   }
 
-  void _preventScrollJump(FocusNode node) {
-    if (node.hasFocus) {
-      // Temporarily disable physics during focus change
-      _scrollController.jumpTo(_scrollController.offset);
+  // Calculate required teachers based on level and update UI
+  void _onStudentsChanged(String value, AssessmentProvider provider) {
+    provider.reqStudents = value;
+
+    // Calculate required teachers
+    final studentsText = value.trim();
+    if (studentsText.isNotEmpty) {
+      final students = int.tryParse(studentsText) ?? 0;
+      if (students > 0) {
+        if (provider.level.toUpperCase() == 'ECE') {
+          provider.reqNumRequired = (students / 25).ceil().toString();
+        } else {
+          provider.reqNumRequired = (students / 45).ceil().toString();
+        }
+      } else {
+        provider.reqNumRequired = '';
+      }
+    } else {
+      provider.reqNumRequired = '';
     }
+
+    // Force UI update
+    provider.notifyListeners();
   }
 
   @override
@@ -98,7 +114,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
           onPressed: () => context.pop(),
         ),
         actions: [
-          // Show pending count badge if offline items exist
           Consumer<AssessmentProvider>(
             builder: (context, prov, child) {
               return Stack(
@@ -169,44 +184,87 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // ─── 1.1 Absent Teachers ───────────────────────────────
-                        _sectionCard(
-                          title: '1.1 Staff Absent on Day of Assessment at ${provider.schoolName}',
-                          children: [
-                            ...provider.absentRecords.asMap().entries.map((e) {
-                              return _absentRow(context, e.key, e.value);
-                            }).toList(),
-                            const SizedBox(height: 16),
-                            OutlinedButton.icon(
-                              icon: const Icon(Icons.add),
-                              label: const Text('Add Absent Teacher'),
-                              onPressed: provider.addAbsent,
-                            ),
-                          ],
+                        Consumer<AssessmentProvider>(
+                          builder: (context, prov, child) {
+                            return _sectionCard(
+                              title: '1.1 Staff Absent on Day of Assessment at ${prov.schoolName}',
+                              children: [
+                                if (prov.absentRecords.isEmpty)
+                                  const Padding(
+                                    padding: EdgeInsets.all(16),
+                                    child: Center(
+                                      child: Text(
+                                        'No absent teachers recorded. Tap the button below to add.',
+                                        style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  ...prov.absentRecords.asMap().entries.map((e) {
+                                    return _absentRow(context, e.key, e.value, prov);
+                                  }).toList(),
+                                const SizedBox(height: 16),
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.add),
+                                  label: const Text('Add Absent Teacher'),
+                                  onPressed: () {
+                                    prov.addAbsent();
+                                  },
+                                ),
+                              ],
+                            );
+                          },
                         ),
                         const SizedBox(height: 32),
 
-                        // ─── 1.2 Total Staff ───────────────────────────────────
-                        _sectionCard(
-                          title: '1.2 Total staff (including all administrative staff), teaching load and qualification',
-                          children: [
-                            ...provider.staffRecords.asMap().entries.map((e) {
-                              return _staffRow(context, e.key, e.value);
-                            }).toList(),
-                            const SizedBox(height: 16),
-                            OutlinedButton.icon(
-                              icon: const Icon(Icons.add),
-                              label: const Text('Add Staff Member'),
-                              onPressed: provider.addStaff,
-                            ),
-                          ],
+                        // ─── 1.2 Total Staff with Position Dropdown ─────────────
+                        Consumer<AssessmentProvider>(
+                          builder: (context, prov, child) {
+                            return _sectionCard(
+                              title: '1.2 Total staff (including all administrative staff), teaching load and qualification',
+                              children: [
+                                if (prov.isLoadingPositions)
+                                  const Padding(
+                                    padding: EdgeInsets.only(bottom: 16),
+                                    child: Text(
+                                      'Loading positions...',
+                                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                                    ),
+                                  ),
+                                if (prov.staffRecords.isEmpty)
+                                  const Padding(
+                                    padding: EdgeInsets.all(16),
+                                    child: Center(
+                                      child: Text(
+                                        'No staff records. Tap the button below to add.',
+                                        style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  ...prov.staffRecords.asMap().entries.map((e) {
+                                    return _staffRowWithPosition(context, e.key, e.value, prov);
+                                  }).toList(),
+                                const SizedBox(height: 16),
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.add),
+                                  label: const Text('Add Staff Member'),
+                                  onPressed: () {
+                                    prov.addStaff();
+                                  },
+                                ),
+                              ],
+                            );
+                          },
                         ),
                         const SizedBox(height: 32),
 
-                        // ─── 1.3 Required Teachers – Auto-fill & Disabled ───────
+                        // ─── 1.3 Required Teachers ─────────────────────────────
                         _sectionCard(
                           title: '1.3 Teacher Required',
-                          subtitle:
-                          'The purpose of this section is to check how many teachers are required in different subjects. This data will form the basis for teacher supply or transfer.',
+                          subtitle: 'The purpose of this section is to check how many teachers are required in different subjects. This data will form the basis for teacher supply or transfer.',
                           children: [
                             TextFormField(
                               initialValue: widget.schoolLevel ?? 'ECE',
@@ -237,7 +295,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                                   child: TextFormField(
                                     initialValue: provider.reqAssTeacher,
                                     decoration: const InputDecoration(
-                                      labelText: 'Assistant Teachers',
+                                      labelText: 'Assigned Teachers',
                                       border: OutlineInputBorder(),
                                     ),
                                     keyboardType: TextInputType.number,
@@ -269,19 +327,21 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                                       border: OutlineInputBorder(),
                                     ),
                                     keyboardType: TextInputType.number,
-                                    onChanged: (v) => provider.reqStudents = v,
+                                    onChanged: (v) => _onStudentsChanged(v, provider),
                                   ),
                                 ),
                                 const SizedBox(width: 16),
                                 Expanded(
                                   child: TextFormField(
                                     initialValue: provider.reqNumRequired,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Required Teachers',
-                                      border: OutlineInputBorder(),
+                                    decoration: InputDecoration(
+                                      labelText: 'Teachers Required: ${provider.reqNumRequired}',
+                                      border: const OutlineInputBorder(),
+                                      filled: true,
+                                      fillColor: Colors.grey[100],
                                     ),
                                     keyboardType: TextInputType.number,
-                                    onChanged: (v) => provider.reqNumRequired = v,
+                                    enabled: false,
                                   ),
                                 ),
                               ],
@@ -290,61 +350,144 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                         ),
                         const SizedBox(height: 32),
 
-                        // ─── 1.4 Verify Students – FULLY DYNAMIC ────────
+                        // ─── 1.4 Verify Students – TABULAR FORM ─────────────────
                         _sectionCard(
                           title: '1.4 Verify Students',
-                          subtitle:
-                          'The purpose of this section is to check whether schools are reporting student numbers accurately. Go around to each of the classrooms and conduct a physical head count.',
+                          subtitle: 'The purpose of this section is to check whether schools are reporting student numbers accurately. Go around to each of the classrooms and conduct a physical head count.',
                           children: [
-                            // Show loading indicator for grades if needed
                             if (provider.isLoadingGrades)
                               const Padding(
                                 padding: EdgeInsets.only(bottom: 16),
                                 child: Text(
-                                  'Refreshing grades in background...',
+                                  'Loading grades...',
                                   style: TextStyle(color: Colors.grey, fontSize: 12),
                                 ),
                               ),
-                            ...provider.verifyStudentRecords.asMap().entries.map((entry) {
-                              final index = entry.key;
-                              final record = entry.value;
-                              return _verifyStudentRow(context, index, record, provider);
-                            }).toList(),
-                            const SizedBox(height: 16),
-                            OutlinedButton.icon(
-                              icon: const Icon(Icons.add),
-                              label: const Text('Add Class Verification'),
-                              onPressed: provider.addVerifyStudent,
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size.fromHeight(48),
+                            if (provider.gradesForLevel.isEmpty && !provider.isLoadingGrades)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange.shade50,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.orange.shade200),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.info_outline, color: Colors.orange.shade700, size: 20),
+                                      const SizedBox(width: 8),
+                                      const Expanded(
+                                        child: Text(
+                                          'No grades available. Please connect to internet to load grades.',
+                                          style: TextStyle(color: Colors.orange, fontSize: 13),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
-                            ),
+                            if (provider.gradesForLevel.isNotEmpty) ...[
+                              Container(
+                                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Row(
+                                  children: [
+                                    Expanded(flex: 2, child: Text('Grade', style: TextStyle(fontWeight: FontWeight.bold))),
+                                    Expanded(flex: 1, child: Text('EMIS M*', style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                                    Expanded(flex: 1, child: Text('Actual M*', style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                                    Expanded(flex: 1, child: Text('EMIS F*', style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                                    Expanded(flex: 1, child: Text('Actual F*', style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              ...provider.gradesForLevel.map((grade) {
+                                final gradeName = grade['name']?.toString() ?? 'Unknown';
+                                return _verifyStudentTableRow(context, gradeName, provider);
+                              }).toList(),
+                              const SizedBox(height: 8),
+                              Text(
+                                '* All fields are required',
+                                style: TextStyle(color: Colors.red.shade700, fontSize: 12, fontStyle: FontStyle.italic),
+                              ),
+                            ],
                           ],
                         ),
                         const SizedBox(height: 32),
 
-                        // ─── 1.5 Verify Fees – MULTIPLE ───────────────────────────────────
+                        // ─── 1.5 Verify Fees – TABULAR FORM FROM API ────────────
                         _sectionCard(
                           title: '1.5 Verify Fees',
                           subtitle: 'The purpose of this section is to check actual fees charged to parents and students.',
                           children: [
-                            ...provider.feeRecords.asMap().entries.map((entry) {
-                              int idx = entry.key;
-                              var fee = entry.value;
-                              return _feeRow(context, idx, fee);
-                            }).toList(),
-                            const SizedBox(height: 16),
-                            OutlinedButton.icon(
-                              icon: const Icon(Icons.add),
-                              label: const Text('Add Fee Record'),
-                              onPressed: provider.addFeeRecord,
-                              style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-                            ),
+                            if (provider.isLoadingFees)
+                              const Padding(
+                                padding: EdgeInsets.only(bottom: 16),
+                                child: Text(
+                                  'Loading fees...',
+                                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                                ),
+                              ),
+                            if (provider.availableFees.isEmpty && !provider.isLoadingFees)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange.shade50,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.orange.shade200),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.info_outline, color: Colors.orange.shade700, size: 20),
+                                      const SizedBox(width: 8),
+                                      const Expanded(
+                                        child: Text(
+                                          'No fees available. Please connect to internet to load fees.',
+                                          style: TextStyle(color: Colors.orange, fontSize: 13),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            if (provider.availableFees.isNotEmpty) ...[
+                              Container(
+                                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Row(
+                                  children: [
+                                    Expanded(flex: 2, child: Text('Fee Type', style: TextStyle(fontWeight: FontWeight.bold))),
+                                    Expanded(flex: 1, child: Text('Charged?*', style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                                    Expanded(flex: 2, child: Text('Purpose*', style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                                    Expanded(flex: 1, child: Text('Amount*', style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center)),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              ...provider.availableFees.map((fee) {
+                                final feeName = fee['fee']?.toString() ?? 'Unknown';
+                                return _feeTableRow(context, feeName, provider);
+                              }).toList(),
+                              const SizedBox(height: 8),
+                              Text(
+                                '* Required fields. Amount and Purpose required only if Charged? is Yes',
+                                style: TextStyle(color: Colors.red.shade700, fontSize: 12, fontStyle: FontStyle.italic),
+                              ),
+                            ],
                           ],
                         ),
                         const SizedBox(height: 48),
 
-                        // ─── Submit Button ───────────────────────────────────────────────
+                        // ─── Submit Button ───────────────────────────────────────
                         Consumer<AssessmentProvider>(
                           builder: (context, prov, child) {
                             return SizedBox(
@@ -420,155 +563,525 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Dynamic Verify Student Row – FIXED: offline-first with proper caching
+  // Staff Row with Position Dropdown
   // ────────────────────────────────────────────────
-  Widget _verifyStudentRow(
+  Widget _staffRowWithPosition(
       BuildContext context,
       int index,
-      Map<String, dynamic> record,
+      Map<String, dynamic> data,
       AssessmentProvider provider,
       ) {
-    // Get the current selected value
-    final currentValue = record['classGrade'] as String?;
-
-    // Check if the current value exists in the grades list
-    final bool valueExists = provider.gradesForLevel.any(
-            (grade) => grade['name']?.toString() == currentValue
-    );
-
-    // If the value doesn't exist in current items, set it to null to avoid assertion error
-    if (currentValue != null && !valueExists && provider.gradesForLevel.isNotEmpty) {
-      // Schedule a microtask to update the record (can't call setState here directly)
-      Future.microtask(() {
-        if (mounted) {
-          provider.updateVerifyStudent(index, 'classGrade', null);
-        }
-      });
-    }
-
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Show dropdown if grades exist (from cache or API)
-            if (provider.gradesForLevel.isNotEmpty)
-              DropdownButtonFormField<String?>(
-                key: ValueKey('grade_dropdown_$index'), // Force rebuild when grades change
-                value: valueExists ? currentValue : null,
-                menuMaxHeight: 240,
-                decoration: const InputDecoration(
-                  labelText: 'Class / Grade *',
-                  border: OutlineInputBorder(),
-                  hintText: 'Select a grade',
-                ),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text(
-                      'Select a grade...',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ),
-                  ...provider.gradesForLevel.map((grade) {
-                    final name = grade['name']?.toString() ?? 'Unnamed Grade';
-                    return DropdownMenuItem<String?>(
-                      value: name,
-                      child: Text(name),
-                    );
-                  }).toList(),
-                ],
-                onChanged: (String? v) {
-                  provider.updateVerifyStudent(index, 'classGrade', v);
-                },
-                validator: (v) => v == null ? 'Please select a grade' : null,
-                dropdownColor: Theme.of(context).scaffoldBackgroundColor,
-              )
-            else
-            // Show a loading or info message when no grades are available
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade300),
-                  borderRadius: BorderRadius.circular(4),
-                  color: Colors.grey.shade50,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      provider.isLoadingGrades ? Icons.hourglass_empty : Icons.info_outline,
-                      color: provider.isLoadingGrades ? Colors.grey : Colors.orange.shade700,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        provider.isLoadingGrades
-                            ? 'Loading grades from cache...'
-                            : provider.gradesForLevel.isEmpty && !provider.isLoadingGrades
-                            ? 'No grades available offline. Please connect to internet to load grades.'
-                            : 'Select a grade',
-                        style: TextStyle(
-                          color: provider.isLoadingGrades ? Colors.grey : Colors.orange.shade700,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+            TextFormField(
+              controller: data['fname'],
+              decoration: const InputDecoration(
+                labelText: 'Full Name *',
+                border: OutlineInputBorder(),
               ),
+              validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+            ),
             const SizedBox(height: 16),
+
+            // Gender and Present in one row
             Row(
               children: [
                 Expanded(
-                  child: TextFormField(
-                    controller: record['emisMale'] as TextEditingController,
-                    decoration: const InputDecoration(labelText: 'EMIS Male'),
-                    keyboardType: TextInputType.number,
+                  child: DropdownButtonFormField<String>(
+                    value: data['gender'],
+                    decoration: const InputDecoration(
+                      labelText: 'Gender',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: ['Male', 'Female', 'Other']
+                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                        .toList(),
+                    onChanged: (v) {
+                      data['gender'] = v;
+                      provider.notifyListeners();
+                    },
+                    menuMaxHeight: 240,
+                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: data['present'],
+                    decoration: const InputDecoration(
+                      labelText: 'Present',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: ['Yes', 'No', 'Partial']
+                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                        .toList(),
+                    onChanged: (v) {
+                      data['present'] = v;
+                      provider.notifyListeners();
+                    },
+                    menuMaxHeight: 240,
+                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Position and Week Load in one row
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: data['position']?.text.isNotEmpty == true ? data['position'].text : null,
+                    decoration: const InputDecoration(
+                      labelText: 'Position *',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: provider.positions.isEmpty
+                        ? [const DropdownMenuItem(
+                      value: null,
+                      child: Text('Loading positions...'),
+                    )]
+                        : [
+                      const DropdownMenuItem(
+                        value: '',
+                        child: Text('Select a position', style: TextStyle(color: Colors.grey)),
+                      ),
+                      ...provider.positions.map((position) {
+                        return DropdownMenuItem<String>(
+                          value: position['name']?.toString() ?? '',
+                          child: Text(position['name']?.toString() ?? 'Unknown'),
+                        );
+                      }).toList(),
+                    ],
+                    onChanged: (value) {
+                      if (value != null && value.isNotEmpty) {
+                        data['position'].text = value;
+                        provider.notifyListeners();
+                      }
+                    },
+                    validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                    menuMaxHeight: 240,
+                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
                   ),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
                   child: TextFormField(
-                    controller: record['countMale'] as TextEditingController,
-                    decoration: const InputDecoration(labelText: 'Actual Count Male'),
+                    controller: data['week_load'],
+                    decoration: const InputDecoration(
+                      labelText: 'Weekly Load',
+                      border: OutlineInputBorder(),
+                    ),
                     keyboardType: TextInputType.number,
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
+
+            // Bio ID and Pay ID in one row
             Row(
               children: [
                 Expanded(
                   child: TextFormField(
-                    controller: record['emisFemale'] as TextEditingController,
-                    decoration: const InputDecoration(labelText: 'EMIS Female'),
-                    keyboardType: TextInputType.number,
+                    controller: data['bio_id'],
+                    decoration: const InputDecoration(
+                      labelText: 'Bio ID',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
                   child: TextFormField(
-                    controller: record['countFemale'] as TextEditingController,
-                    decoration: const InputDecoration(labelText: 'Actual Count Female'),
-                    keyboardType: TextInputType.number,
+                    controller: data['pay_id'],
+                    decoration: const InputDecoration(
+                      labelText: 'Pay ID',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
+
+            // Qualification
+            TextFormField(
+              controller: data['qualification'],
+              decoration: const InputDecoration(
+                labelText: 'Qualification',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+            const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerRight,
               child: IconButton(
                 icon: const Icon(Icons.delete_outline, color: Colors.red),
-                onPressed: () => provider.removeVerifyStudent(index),
+                onPressed: () => provider.removeStaff(index),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────
+  // Absent Row
+  // ────────────────────────────────────────────────
+  Widget _absentRow(
+      BuildContext context,
+      int index,
+      Map<String, dynamic> data,
+      AssessmentProvider provider,
+      ) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextFormField(
+              controller: data['fname'],
+              decoration: const InputDecoration(
+                labelText: 'Full Name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Bio ID and Pay ID in one row
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: data['bio_id'],
+                    decoration: const InputDecoration(
+                      labelText: 'Bio ID',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: TextFormField(
+                    controller: data['pay_id'],
+                    decoration: const InputDecoration(
+                      labelText: 'Pay ID',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Excuse and Reason in one row
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: data['excuse'],
+                    decoration: const InputDecoration(
+                      labelText: 'Excuse',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const ['Yes', 'No']
+                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                        .toList(),
+                    onChanged: (v) {
+                      data['excuse'] = v;
+                      provider.notifyListeners();
+                    },
+                    menuMaxHeight: 240,
+                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: TextFormField(
+                    controller: data['reason'],
+                    decoration: const InputDecoration(
+                      labelText: 'Reason',
+                      border: OutlineInputBorder(),
+                    ),
+                    maxLines: 1,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                onPressed: () => provider.removeAbsent(index),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────
+  // Verify Student Table Row with validation
+  // ────────────────────────────────────────────────
+  Widget _verifyStudentTableRow(
+      BuildContext context,
+      String gradeName,
+      AssessmentProvider provider,
+      ) {
+    provider.ensureVerifyStudentRecord(gradeName);
+    final record = provider.getVerifyStudentRecord(gradeName);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                gradeName,
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 1,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: TextFormField(
+                controller: record['emisMale'] as TextEditingController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  hintText: 'Required',
+                  isDense: true,
+                  errorStyle: TextStyle(fontSize: 10),
+                ),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Required';
+                  }
+                  return null;
+                },
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 1,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: TextFormField(
+                controller: record['countMale'] as TextEditingController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  hintText: 'Required',
+                  isDense: true,
+                  errorStyle: TextStyle(fontSize: 10),
+                ),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Required';
+                  }
+                  return null;
+                },
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 1,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: TextFormField(
+                controller: record['emisFemale'] as TextEditingController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  hintText: 'Required',
+                  isDense: true,
+                  errorStyle: TextStyle(fontSize: 10),
+                ),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Required';
+                  }
+                  return null;
+                },
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 1,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: TextFormField(
+                controller: record['countFemale'] as TextEditingController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  hintText: 'Required',
+                  isDense: true,
+                  errorStyle: TextStyle(fontSize: 10),
+                ),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Required';
+                  }
+                  return null;
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────
+  // Fee Table Row with validation
+  // ────────────────────────────────────────────────
+  Widget _feeTableRow(
+      BuildContext context,
+      String feeName,
+      AssessmentProvider provider,
+      ) {
+    final record = provider.getFeeRecord(feeName);
+
+    if (record == null) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey.shade300),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Center(
+          child: Text('Initializing fee record...'),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                feeName,
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 1,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: DropdownButtonFormField<String>(
+                value: record['pay'],
+                menuMaxHeight: 240,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  isDense: true,
+                  errorStyle: TextStyle(fontSize: 10),
+                ),
+                items: const ['Yes', 'No']
+                    .map((String value) => DropdownMenuItem<String>(
+                  value: value,
+                  child: Text(value, style: const TextStyle(fontSize: 12)),
+                ))
+                    .toList(),
+                onChanged: (newValue) {
+                  provider.updateFeeRecord(feeName, 'pay', newValue ?? 'Yes');
+                },
+                validator: (value) {
+                  if (value == null) {
+                    return 'Required';
+                  }
+                  return null;
+                },
+                dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: TextFormField(
+                controller: record['purpose'] as TextEditingController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  hintText: 'Required if Yes',
+                  isDense: true,
+                  errorStyle: TextStyle(fontSize: 10),
+                ),
+                maxLines: 1,
+                validator: (value) {
+                  if (record['pay'] == 'Yes' && (value == null || value.trim().isEmpty)) {
+                    return 'Required';
+                  }
+                  return null;
+                },
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 1,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: TextFormField(
+                controller: record['amount'] as TextEditingController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  prefixText: 'LRD ',
+                  prefixStyle: TextStyle(fontSize: 10),
+                  hintText: '0.00',
+                  isDense: true,
+                  errorStyle: TextStyle(fontSize: 10),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                validator: (value) {
+                  if (record['pay'] == 'Yes' && (value == null || value.trim().isEmpty)) {
+                    return 'Required';
+                  }
+                  return null;
+                },
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -609,287 +1122,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
             ],
             const SizedBox(height: 20),
             ...children,
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────────
-  // Absent Row
-  // ────────────────────────────────────────────────
-  Widget _absentRow(BuildContext context, int index, Map<String, dynamic> data) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextFormField(
-              controller: data['fname'],
-              decoration: const InputDecoration(
-                labelText: 'Full Name *',
-                border: OutlineInputBorder(),
-              ),
-              validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: data['bio_id'],
-              decoration: const InputDecoration(
-                labelText: 'Bio ID',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: data['pay_id'],
-              decoration: const InputDecoration(
-                labelText: 'Pay ID',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: data['excuse'],
-              decoration: const InputDecoration(
-                labelText: 'Excuse',
-                border: OutlineInputBorder(),
-              ),
-              items: const ['Yes', 'No']
-                  .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                  .toList(),
-              onChanged: (v) {
-                data['excuse'] = v;
-                Provider.of<AssessmentProvider>(context, listen: false).notifyListeners();
-              },
-              menuMaxHeight: 240,
-              dropdownColor: Theme.of(context).scaffoldBackgroundColor,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: data['reason'],
-              decoration: const InputDecoration(
-                labelText: 'Reason',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                onPressed: () => Provider.of<AssessmentProvider>(context, listen: false).removeAbsent(index),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────────
-  // Staff Row
-  // ────────────────────────────────────────────────
-  Widget _staffRow(BuildContext context, int index, Map<String, dynamic> data) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextFormField(
-              controller: data['fname'],
-              decoration: const InputDecoration(
-                labelText: 'Full Name *',
-                border: OutlineInputBorder(),
-              ),
-              validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: data['gender'],
-                    decoration: const InputDecoration(
-                      labelText: 'Gender',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: ['Male', 'Female', 'Other']
-                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                        .toList(),
-                    onChanged: (v) {
-                      data['gender'] = v;
-                      Provider.of<AssessmentProvider>(context, listen: false).notifyListeners();
-                    },
-                    menuMaxHeight: 240,
-                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: data['present'],
-                    decoration: const InputDecoration(
-                      labelText: 'Present',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: ['Yes', 'No', 'Partial']
-                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                        .toList(),
-                    onChanged: (v) {
-                      data['present'] = v;
-                      Provider.of<AssessmentProvider>(context, listen: false).notifyListeners();
-                    },
-                    menuMaxHeight: 240,
-                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: data['position'],
-              decoration: const InputDecoration(
-                labelText: 'Position',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: data['week_load'],
-              decoration: const InputDecoration(
-                labelText: 'Weekly Load',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: data['bio_id'],
-              decoration: const InputDecoration(
-                labelText: 'Bio ID',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: data['pay_id'],
-              decoration: const InputDecoration(
-                labelText: 'Pay ID',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: data['qualification'],
-              decoration: const InputDecoration(
-                labelText: 'Qualification',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                onPressed: () => Provider.of<AssessmentProvider>(context, listen: false).removeStaff(index),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────────
-  // Fee Row
-  // ────────────────────────────────────────────────
-  Widget _feeRow(BuildContext context, int index, Map<String, dynamic> feeData) {
-    final provider = Provider.of<AssessmentProvider>(context, listen: false);
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            DropdownButtonFormField<String>(
-              value: feeData['fee'],
-              isExpanded: true,
-              menuMaxHeight: 240,
-              decoration: const InputDecoration(
-                labelText: 'Fee Type *',
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                'PTA',
-                'Development fees',
-                'Registration fees',
-                'Tuition fees',
-                'WAEC Examination fees',
-                'WASSCE Examination',
-                'Uniform fees',
-                'Other'
-              ].map((String value) => DropdownMenuItem<String>(value: value, child: Text(value))).toList(),
-              onChanged: (newValue) {
-                provider.updateFee(index, 'fee', newValue ?? 'Tuition fees');
-              },
-              validator: (value) => value == null ? 'Required' : null,
-              dropdownColor: Theme.of(context).scaffoldBackgroundColor,
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: feeData['pay'],
-              menuMaxHeight: 240,
-              decoration: const InputDecoration(
-                labelText: 'Does the school charge this fee?',
-                border: OutlineInputBorder(),
-              ),
-              items: const ['Yes', 'No']
-                  .map((String value) => DropdownMenuItem(value: value, child: Text(value)))
-                  .toList(),
-              onChanged: (newValue) {
-                provider.updateFee(index, 'pay', newValue ?? 'Yes');
-              },
-              dropdownColor: Theme.of(context).scaffoldBackgroundColor,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: feeData['purpose'],
-              decoration: const InputDecoration(
-                labelText: 'Purpose / Remark',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: feeData['amount'],
-              decoration: const InputDecoration(
-                labelText: 'Amount (LRD)',
-                border: OutlineInputBorder(),
-                prefixText: 'LRD ',
-              ),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              validator: (v) {
-                if (feeData['pay'] == 'Yes' && (v == null || v.trim().isEmpty)) {
-                  return 'Amount required when fee is charged';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                onPressed: () => provider.removeFee(index),
-              ),
-            ),
           ],
         ),
       ),

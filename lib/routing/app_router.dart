@@ -13,6 +13,9 @@ import '../features/school/presentation/pages/about.dart';
 import '../features/school/presentation/pages/add_school_page.dart';
 import '../features/school/presentation/pages/assessment_2.dart';
 import '../features/school/presentation/pages/assessment_complete_page.dart';
+import '../features/school/presentation/pages/classroom_1_page.dart';
+import '../features/school/presentation/pages/classroom_2_page.dart';
+import '../features/school/presentation/pages/classroom_3_page.dart';
 import '../features/school/presentation/pages/classroom_observation_page.dart';
 import '../features/school/presentation/pages/document_check_page.dart';
 import '../features/school/presentation/pages/infrastructure_page.dart';
@@ -196,7 +199,7 @@ GoRouter createRouter(AuthProvider authProvider) {
             path: '/schools',
             pageBuilder: (context, state) => MaterialPage(
               key: state.pageKey,
-              fullscreenDialog: true,  // ← This makes it a full-screen modal
+              fullscreenDialog: true,
               child: const AddSchoolPage(),
             ),
           ),
@@ -236,6 +239,58 @@ GoRouter createRouter(AuthProvider authProvider) {
               },
             ),
           ),
+
+          // ─── Individual Classroom Routes ───
+          GoRoute(
+            path: '/classroom-1',
+            pageBuilder: (context, state) => CustomTransitionPage(
+              key: state.pageKey,
+              child: Classroom1Page(
+                schoolCode: (state.extra as Map<String, dynamic>?)?['schoolCode'] as String?,
+                schoolName: (state.extra as Map<String, dynamic>?)?['schoolName'] as String?,
+                schoolLevel: (state.extra as Map<String, dynamic>?)?['level'] as String?,
+              ),
+              transitionDuration: const Duration(milliseconds: 400),
+              reverseTransitionDuration: const Duration(milliseconds: 300),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+            ),
+          ),
+          GoRoute(
+            path: '/classroom-2',
+            pageBuilder: (context, state) => CustomTransitionPage(
+              key: state.pageKey,
+              child: Classroom2Page(
+                schoolCode: (state.extra as Map<String, dynamic>?)?['schoolCode'] as String?,
+                schoolName: (state.extra as Map<String, dynamic>?)?['schoolName'] as String?,
+                schoolLevel: (state.extra as Map<String, dynamic>?)?['level'] as String?,
+              ),
+              transitionDuration: const Duration(milliseconds: 400),
+              reverseTransitionDuration: const Duration(milliseconds: 300),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+            ),
+          ),
+          GoRoute(
+            path: '/classroom-3',
+            pageBuilder: (context, state) => CustomTransitionPage(
+              key: state.pageKey,
+              child: Classroom3Page(
+                schoolCode: (state.extra as Map<String, dynamic>?)?['schoolCode'] as String?,
+                schoolName: (state.extra as Map<String, dynamic>?)?['schoolName'] as String?,
+                schoolLevel: (state.extra as Map<String, dynamic>?)?['level'] as String?,
+              ),
+              transitionDuration: const Duration(milliseconds: 400),
+              reverseTransitionDuration: const Duration(milliseconds: 300),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+            ),
+          ),
+
+          // Keep the original classroom page for backward compatibility if needed
           GoRoute(
             path: '/classroom',
             pageBuilder: (context, state) => CustomTransitionPage(
@@ -248,6 +303,7 @@ GoRouter createRouter(AuthProvider authProvider) {
               },
             ),
           ),
+
           GoRoute(
             path: '/leadership',
             pageBuilder: (context, state) => CustomTransitionPage(

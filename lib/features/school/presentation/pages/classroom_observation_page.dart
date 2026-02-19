@@ -25,16 +25,22 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
   String? _schoolName;
   String? _schoolCode;
   String? _schoolLevel;
-  int _selectedClassNum = 1;
-  final TextEditingController _teacherController = TextEditingController();
+
+  // Controllers for each classroom (3 classrooms)
+  final List<TextEditingController> _teacherControllers = List.generate(3, (_) => TextEditingController());
+  final List<TextEditingController> _nbMaleControllers = List.generate(3, (_) => TextEditingController());
+  final List<TextEditingController> _nbFemaleControllers = List.generate(3, (_) => TextEditingController());
+
+  // Selected values for each classroom
+  final List<String?> _selectedGrades = List.generate(3, (_) => null);
+  final List<String?> _selectedSubjects = List.generate(3, (_) => null);
+
+  // Scores for each classroom (list of maps) - each classroom has its own scores map
+  final List<Map<String, int?>> _scores = List.generate(3, (_) => {});
+
   List<Map<String, dynamic>> _grades = [];
   List<Map<String, dynamic>> _subjects = [];
-  String? _selectedGrade;
-  String? _selectedSubject;
-  final TextEditingController _nbMaleController = TextEditingController();
-  final TextEditingController _nbFemaleController = TextEditingController();
   List<Map<String, dynamic>> _questions = [];
-  Map<String, int?> _scores = {};
 
   @override
   void initState() {
@@ -62,9 +68,15 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
 
   @override
   void dispose() {
-    _teacherController.dispose();
-    _nbMaleController.dispose();
-    _nbFemaleController.dispose();
+    for (var controller in _teacherControllers) {
+      controller.dispose();
+    }
+    for (var controller in _nbMaleControllers) {
+      controller.dispose();
+    }
+    for (var controller in _nbFemaleControllers) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -83,9 +95,12 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
         };
       }).toList();
 
-      // Re-init scores from cache
-      for (var q in _questions) {
-        _scores[q['id']!] = null;
+      // Re-init scores for all 3 classrooms from cache
+      for (int i = 0; i < 3; i++) {
+        _scores[i] = {};
+        for (var q in _questions) {
+          _scores[i][q['id']!] = null;
+        }
       }
     }
 
@@ -140,11 +155,13 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
               };
             }).toList();
 
-            // Update scores (preserve existing answers if possible)
-            for (var q in _questions) {
-              if (!_scores.containsKey(q['id'])) {
-                _scores[q['id']!] = null;
+            // Update scores for all classrooms (preserve existing answers if possible)
+            for (int i = 0; i < 3; i++) {
+              final newScores = <String, int?>{};
+              for (var q in _questions) {
+                newScores[q['id']!] = _scores[i].containsKey(q['id']) ? _scores[i][q['id']!] : null;
               }
+              _scores[i] = newScores;
             }
           });
 
@@ -204,13 +221,84 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
     }
   }
 
+  // Validate all classrooms
+  bool _validateAllClassrooms() {
+    for (int i = 0; i < 3; i++) {
+      // Check teacher name
+      if (_teacherControllers[i].text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Teacher name is required for Classroom ${i + 1}'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return false;
+      }
+
+      // Check grade
+      if (_selectedGrades[i] == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Grade is required for Classroom ${i + 1}'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return false;
+      }
+
+      // Check subject
+      if (_selectedSubjects[i] == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Subject is required for Classroom ${i + 1}'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return false;
+      }
+
+      // Check male/female counts
+      if (_nbMaleControllers[i].text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Number of male students is required for Classroom ${i + 1}'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return false;
+      }
+
+      if (_nbFemaleControllers[i].text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Number of female students is required for Classroom ${i + 1}'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return false;
+      }
+
+      // Check if all questions are answered for this classroom
+      for (var q in _questions) {
+        if (_scores[i][q['id']!] == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Please answer all questions for Classroom ${i + 1}'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
   Future<void> _submit() async {
     if (!mounted) return;
 
-    if (_teacherController.text.trim().isEmpty || _selectedGrade == null || _selectedSubject == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill all required fields'), backgroundColor: Colors.orange),
-      );
+    if (!_validateAllClassrooms()) {
       return;
     }
 
@@ -226,60 +314,86 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
     }
 
     final headers = auth.getAuthHeaders();
+    final isOnline = await LocalStorageService.isOnline();
 
-    final cleanScores = _scores.map((key, value) => MapEntry(key, value ?? 0));
+    // Prepare payloads for all 3 classrooms
+    List<Map<String, dynamic>> allPayloads = [];
 
-    final payload = {
-      'school': _schoolCode ?? 'N/A',
-      'class_num': _selectedClassNum,
-      'grade': _selectedGrade,
-      'subject': _selectedSubject,
-      'teacher': _teacherController.text.trim(),
-      'nb_male': int.tryParse(_nbMaleController.text.trim() ?? '0') ?? 0,
-      'nb_female': int.tryParse(_nbFemaleController.text.trim() ?? '0') ?? 0,
-      'scores': cleanScores,
-    };
+    for (int i = 0; i < 3; i++) {
+      final cleanScores = _scores[i].map((key, value) => MapEntry(key, value ?? 0));
 
-    print('Classroom Observation payload:');
-    print(jsonEncode(payload));
+      final payload = {
+        'school': _schoolCode ?? 'N/A',
+        'class_num': i + 1,
+        'grade': _selectedGrades[i],
+        'subject': _selectedSubjects[i],
+        'teacher': _teacherControllers[i].text.trim(),
+        'nb_male': int.tryParse(_nbMaleControllers[i].text.trim() ?? '0') ?? 0,
+        'nb_female': int.tryParse(_nbFemaleControllers[i].text.trim() ?? '0') ?? 0,
+        'scores': cleanScores,
+      };
+
+      allPayloads.add(payload);
+    }
+
+    print('All Classroom Observations payload:');
+    print(jsonEncode(allPayloads));
 
     String message = 'Unknown status';
     Color color = Colors.grey;
 
     try {
-      final isOnline = await LocalStorageService.isOnline();
-
       if (isOnline) {
-        final res = await http.post(
-          Uri.parse('${AppUrl.url}/classroom-observation'),
-          headers: headers,
-          body: jsonEncode(payload),
-        );
+        bool allSuccess = true;
 
-        if (res.statusCode == 200 || res.statusCode == 201) {
-          message = 'Classroom $_selectedClassNum observation saved successfully!';
+        // Submit each classroom observation
+        for (var payload in allPayloads) {
+          final res = await http.post(
+            Uri.parse('${AppUrl.url}/classroom-observation'),
+            headers: headers,
+            body: jsonEncode(payload),
+          );
+
+          if (res.statusCode != 200 && res.statusCode != 201) {
+            allSuccess = false;
+            print('Failed to submit classroom ${payload['class_num']}: ${res.statusCode} - ${res.body}');
+          }
+        }
+
+        if (allSuccess) {
+          message = 'All 3 classroom observations saved successfully!';
           color = Colors.green;
           await _syncPendingClassroom(context);
         } else {
-          message = 'Server error: ${res.statusCode} - ${res.body}';
-          color = Colors.red;
+          // If some failed, save all to pending
+          for (var payload in allPayloads) {
+            await LocalStorageService.savePendingClassroomObservation(payload);
+          }
+          message = 'Some observations failed - saved offline for retry';
+          color = Colors.orange;
         }
       } else {
-        await LocalStorageService.savePendingClassroomObservation(payload);
-        message = 'Saved offline — will sync when online';
+        // Save all to pending queue when offline
+        for (var payload in allPayloads) {
+          await LocalStorageService.savePendingClassroomObservation(payload);
+        }
+        message = 'All 3 observations saved offline — will sync when online';
         color = Colors.orange;
       }
     } catch (e) {
       print('Submit error: $e');
-      message = 'Error: $e';
-      color = Colors.red;
 
+      // Save all to pending on error
       try {
-        await LocalStorageService.savePendingClassroomObservation(payload);
+        for (var payload in allPayloads) {
+          await LocalStorageService.savePendingClassroomObservation(payload);
+        }
         message = 'Saved offline due to error — will retry later';
         color = Colors.orange;
       } catch (hiveErr) {
         print('Hive failed: $hiveErr');
+        message = 'Error: $e';
+        color = Colors.red;
       }
     }
 
@@ -344,11 +458,240 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
     }
   }
 
+  // Build a complete classroom card with its own questions
+  Widget _buildClassroomCard(int classroomNum) {
+    final int index = classroomNum - 1;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 24),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Classroom Header
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '$classroomNum',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Classroom Details',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Teacher Name
+            TextFormField(
+              controller: _teacherControllers[index],
+              decoration: const InputDecoration(
+                labelText: 'Teacher Name *',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.person),
+              ),
+              validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+            ),
+            const SizedBox(height: 16),
+
+            // Grade and Subject Row
+            Row(
+              children: [
+                Expanded(
+                  child: _isFetchingDropdowns
+                      ? const Center(child: CircularProgressIndicator())
+                      : _grades.isEmpty
+                      ? const Text('No grades available', style: TextStyle(color: Colors.grey))
+                      : DropdownButtonFormField<String>(
+                    value: _selectedGrades[index],
+                    decoration: const InputDecoration(
+                      labelText: 'Grade *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.grade),
+                    ),
+                    isExpanded: true,
+                    items: _grades.map((g) {
+                      final name = g['name'] as String?;
+                      return DropdownMenuItem<String>(
+                        value: name,
+                        child: Text(name ?? 'Unnamed Grade'),
+                      );
+                    }).toList(),
+                    onChanged: (value) => setState(() => _selectedGrades[index] = value),
+                    validator: (v) => v == null ? 'Required' : null,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _isFetchingDropdowns
+                      ? const SizedBox.shrink()
+                      : _subjects.isEmpty
+                      ? const Text('No subjects available', style: TextStyle(color: Colors.grey))
+                      : DropdownButtonFormField<String>(
+                    value: _selectedSubjects[index],
+                    decoration: const InputDecoration(
+                      labelText: 'Subject *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.book),
+                    ),
+                    isExpanded: true,
+                    items: _subjects.map((s) {
+                      final name = s['name'] as String?;
+                      return DropdownMenuItem<String>(
+                        value: name,
+                        child: Text(name ?? 'Unnamed Subject'),
+                      );
+                    }).toList(),
+                    onChanged: (value) => setState(() => _selectedSubjects[index] = value),
+                    validator: (v) => v == null ? 'Required' : null,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Male and Female Count Row
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _nbMaleControllers[index],
+                    decoration: const InputDecoration(
+                      labelText: 'Number of Male *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.male),
+                    ),
+                    keyboardType: TextInputType.number,
+                    validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: TextFormField(
+                    controller: _nbFemaleControllers[index],
+                    decoration: const InputDecoration(
+                      labelText: 'Number of Female *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.female),
+                    ),
+                    keyboardType: TextInputType.number,
+                    validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 24),
+
+            // Questions Section Header
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.help_outline, color: AppColors.primary, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Observation Questions for Classroom $classroomNum',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'All questions are Yes/No (1 pt = Yes, 0 pt = No)',
+              style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic),
+            ),
+            const SizedBox(height: 16),
+
+            // Questions for this classroom
+            if (_questions.isEmpty)
+              const Center(child: Text('No questions available'))
+            else
+              ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _questions.length,
+                itemBuilder: (context, qIndex) {
+                  final q = _questions[qIndex];
+                  final qId = q['id'] as String;
+                  final number = q['number'] as String;
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '$number. ${q['name']}',
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _radioOption(index, qId, 1, 'Yes'),
+                            ),
+                            Expanded(
+                              child: _radioOption(index, qId, 0, 'No'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: CustomAppBar(
-        title: 'Module 5: Classroom Observation at ${_schoolName ?? ''}',
+        title: 'Module 5: Classroom Observation',
         backgroundColor: AppColors.primary,
         textColor: Colors.white,
         leading: IconButton(
@@ -394,164 +737,47 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 8),
 
+                          // School Info Card
                           Card(
+                            color: AppColors.primary.withOpacity(0.05),
                             child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                              padding: const EdgeInsets.all(12),
+                              child: Row(
                                 children: [
-                                  Text(
-                                    'Observing Classroom #$_selectedClassNum',
-                                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  DropdownButtonFormField<int>(
-                                    value: _selectedClassNum,
-                                    decoration: const InputDecoration(labelText: 'Classroom Number *'),
-                                    items: [1, 2, 3]
-                                        .map((num) => DropdownMenuItem(value: num, child: Text('Classroom $num')))
-                                        .toList(),
-                                    onChanged: (v) => setState(() => _selectedClassNum = v!),
-                                    validator: (v) => v == null ? 'Required' : null,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  TextFormField(
-                                    controller: _teacherController,
-                                    decoration: const InputDecoration(labelText: 'Teacher Name *'),
-                                    validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  // Grade Dropdown
-                                  if (_isFetchingDropdowns)
-                                    const Center(child: CircularProgressIndicator())
-                                  else if (_grades.isEmpty)
-                                    const Text('No grades available for this level', style: TextStyle(color: Colors.grey))
-                                  else
-                                    DropdownButtonFormField<String>(
-                                      value: _selectedGrade,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Grade *',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                      isExpanded: true,
-                                      items: _grades.map((g) {
-                                        final name = g['name'] as String?;
-                                        return DropdownMenuItem<String>(
-                                          value: name,
-                                          child: Text(name ?? 'Unnamed Grade'),
-                                        );
-                                      }).toList(),
-                                      onChanged: (value) => setState(() => _selectedGrade = value),
-                                      validator: (v) => v == null ? 'Required' : null,
-                                    ),
-                                  const SizedBox(height: 16),
-                                  // Subject Dropdown
-                                  if (_isFetchingDropdowns)
-                                    const SizedBox.shrink()
-                                  else if (_subjects.isEmpty)
-                                    const Text('No subjects available', style: TextStyle(color: Colors.grey))
-                                  else
-                                    DropdownButtonFormField<String>(
-                                      value: _selectedSubject,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Subject *',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                      isExpanded: true,
-                                      items: _subjects.map((s) {
-                                        final name = s['name'] as String?;
-                                        return DropdownMenuItem<String>(
-                                          value: name,
-                                          child: Text(name ?? 'Unnamed Subject'),
-                                        );
-                                      }).toList(),
-                                      onChanged: (value) => setState(() => _selectedSubject = value),
-                                      validator: (v) => v == null ? 'Required' : null,
-                                    ),
-                                  const SizedBox(height: 16),
-                                  // New row: Number of Male and Female students
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: TextFormField(
-                                          controller: _nbMaleController,
-                                          decoration: const InputDecoration(
-                                            labelText: 'Number of Male',
-                                            border: OutlineInputBorder(),
-                                          ),
-                                          keyboardType: TextInputType.number,
-                                          validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+                                  Icon(Icons.school, color: AppColors.primary),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _schoolName ?? 'Unknown School',
+                                          style: const TextStyle(fontWeight: FontWeight.bold),
                                         ),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      Expanded(
-                                        child: TextFormField(
-                                          controller: _nbFemaleController,
-                                          decoration: const InputDecoration(
-                                            labelText: 'Number of Female',
-                                            border: OutlineInputBorder(),
-                                          ),
-                                          keyboardType: TextInputType.number,
-                                          validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+                                        Text(
+                                          'Level: ${_schoolLevel ?? 'N/A'} | Code: ${_schoolCode ?? 'N/A'}',
+                                          style: TextStyle(color: Colors.grey[600], fontSize: 12),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ],
                               ),
                             ),
                           ),
 
-                          const SizedBox(height: 24),
-
-                          const Text(
-                            'Observe for 15 minutes. All questions are Yes/No (1 pt = Yes, 0 pt = No)',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                          ),
                           const SizedBox(height: 16),
 
-                          if (_questions.isEmpty)
-                            const Center(child: Text('No questions available offline. Connect to internet to load.'))
-                          else
-                            ListView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: _questions.length,
-                              itemBuilder: (context, index) {
-                                final q = _questions[index];
-                                final qId = q['id'] as String;
-                                final number = q['number'] as String;
+                          // Three Classroom Cards with their own questions
+                          _buildClassroomCard(1),
+                          _buildClassroomCard(2),
+                          _buildClassroomCard(3),
 
-                                return Card(
-                                  margin: const EdgeInsets.only(bottom: 12),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(12.0),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          '$number. ${q['name']}',
-                                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                                        ),
-                                        const SizedBox(height: 12),
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                          children: [
-                                            _radioOption(qId, 1, 'Yes'),
-                                            _radioOption(qId, 0, 'No'),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
+                          const SizedBox(height: 24),
 
-                          const SizedBox(height: 40),
-
+                          // Submit Button
                           SizedBox(
                             width: double.infinity,
                             height: 56,
@@ -562,12 +788,18 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
                                 final bool canSubmit = snapshot.data ?? true;
                                 return ElevatedButton.icon(
                                   icon: const Icon(Icons.save),
-                                  label: const Text('Submit Classroom Observation', style: TextStyle(fontSize: 17)),
+                                  label: const Text(
+                                    'Submit All 3 Classroom Observations',
+                                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                  ),
                                   onPressed: _isLoading || _isSubmitting || !canSubmit ? null : _submit,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: canSubmit ? AppColors.primary : Colors.grey,
                                     foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    elevation: 3,
                                   ),
                                 );
                               },
@@ -588,15 +820,39 @@ class _ClassroomObservationPageState extends State<ClassroomObservationPage> {
     );
   }
 
-  Widget _radioOption(String qId, int value, String label) {
-    return Expanded(
+  Widget _radioOption(int classroomIndex, String qId, int value, String label) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: _scores[classroomIndex][qId] == value
+              ? AppColors.primary
+              : Colors.grey.shade300,
+        ),
+        borderRadius: BorderRadius.circular(8),
+        color: _scores[classroomIndex][qId] == value
+            ? AppColors.primary.withOpacity(0.1)
+            : null,
+      ),
       child: RadioListTile<int>(
-        title: Text(label, style: const TextStyle(fontSize: 14)),
+        title: Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            color: _scores[classroomIndex][qId] == value
+                ? AppColors.primary
+                : null,
+          ),
+        ),
         value: value,
-        groupValue: _scores[qId],
-        onChanged: _isSubmitting ? null : (v) => setState(() => _scores[qId] = v),
+        groupValue: _scores[classroomIndex][qId],
+        onChanged: _isSubmitting ? null : (v) {
+          setState(() {
+            _scores[classroomIndex][qId] = v;
+          });
+        },
         dense: true,
         contentPadding: EdgeInsets.zero,
+        activeColor: AppColors.primary,
       ),
     );
   }

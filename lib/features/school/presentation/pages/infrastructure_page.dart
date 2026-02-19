@@ -276,7 +276,7 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) {
           context.push(
-            '/classroom',
+            '/classroom-1',
             extra: {
               'schoolCode': _schoolCode,
               'schoolName': _schoolName,
