@@ -57,7 +57,7 @@ class AssessmentCompletePage extends StatelessWidget {
                 // Status message
                 Text(
                   isOffline
-                      ? 'Your assessment has been saved offline.\nIt will be automatically synced when you are back online.'
+                      ? 'Your assessment has been saved offline.Go to settings to sync when you are back online.'
                       : 'Your assessment has been successfully submitted.',
                   style: TextStyle(
                     fontSize: 18,

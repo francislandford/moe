@@ -7,6 +7,7 @@ import '../../../../core/constants/app_text_styles.dart';
 import '../providers/auth_provider.dart';
 import '../../../../core/widgets/custom_text_field.dart';
 import '../../../../core/widgets/loading_overlay.dart';
+import '../../../../core/services/data_preloader_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -31,7 +32,8 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final auth = context.read<AuthProvider>();
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    auth.clearError();
 
     try {
       final success = await auth.login(
@@ -40,50 +42,73 @@ class _LoginPageState extends State<LoginPage> {
       );
 
       if (success && mounted) {
-        // context.go('/home'); // ← change to your actual dashboard route
+        // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Login successful'),
-            backgroundColor: AppColors.success,
+            content: const Text('Login successful! Preparing offline data...'),
+            backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            duration: const Duration(seconds: 2),
           ),
         );
+
+        // Reset preload status
+        DataPreloaderService.resetPreloadStatus();
+
+        // Show preloader dialog
+        _showPreloaderDialog();
+
       } else if (mounted) {
+        // Show error message from provider
+        final errorMsg = auth.errorMessage ?? 'Login failed. Please check your credentials.';
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Login failed. Please check your credentials.'),
+            content: Text(errorMsg),
             backgroundColor: AppColors.error,
             behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         );
       }
     } catch (e) {
-      if (!mounted) return;
-
-      String msg = 'An error occurred. Please try again.';
-      final errorStr = e.toString().toLowerCase();
-
-      if (errorStr.contains('401') || errorStr.contains('422') ||
-          errorStr.contains('invalid credentials') || errorStr.contains('unauthorized')) {
-        msg = 'Invalid email or password.';
-      } else if (errorStr.contains('network') || errorStr.contains('connection') ||
-          errorStr.contains('socketexception') || errorStr.contains('timeout')) {
-        msg = 'Network error. Please check your internet connection.';
-      } else if (errorStr.contains('server')) {
-        msg = 'Server error. Please try again later.';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('An unexpected error occurred. Please try again.'),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+          ),
+        );
       }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          backgroundColor: AppColors.error,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
     }
+  }
+
+  void _showPreloaderDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return const PreloadDialog();
+      },
+    ).then((_) {
+      // After dialog closes, navigate to home
+      if (mounted) {
+        context.go('/home');
+      }
+    });
+
+    // Start preloading after dialog is shown
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      DataPreloaderService.preloadAllData(context).then((_) {
+        // Close dialog after preload completes
+        if (mounted && Navigator.canPop(context)) {
+          Navigator.of(context).pop();
+        }
+      });
+    });
   }
 
   @override
@@ -116,7 +141,7 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                             const SizedBox(height: 16),
                             Text(
-                              'School Quality Assessment',
+                              'School Mapping, Quality Assessment and Performance App',
                               style: AppTextStyles.heading1.copyWith(
                                 fontSize: 26,
                                 color: isDark ? Colors.white : AppColors.primaryDark,
@@ -232,6 +257,77 @@ class _LoginPageState extends State<LoginPage> {
           ),
         );
       },
+    );
+  }
+}
+
+// Preloader Dialog with progress tracking
+class PreloadDialog extends StatefulWidget {
+  const PreloadDialog({super.key});
+
+  @override
+  State<PreloadDialog> createState() => _PreloadDialogState();
+}
+
+class _PreloadDialogState extends State<PreloadDialog> {
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 24),
+            ValueListenableBuilder<PreloadProgress>(
+              valueListenable: DataPreloaderService.progressNotifier,
+              builder: (context, progress, _) {
+                return Column(
+                  children: [
+                    Text(
+                      progress.currentTask,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    LinearProgressIndicator(
+                      value: progress.progress,
+                      backgroundColor: Colors.grey[200],
+                      valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+                      minHeight: 8,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    const SizedBox(height: 8),
+                    Text('${(progress.progress * 100).toInt()}%'),
+                    if (progress.completedTasks.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      const Divider(),
+                      const SizedBox(height: 8),
+                      ...progress.completedTasks.map((task) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          children: [
+                            Icon(Icons.check_circle, color: Colors.green, size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                task,
+                                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )).toList(),
+                    ],
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

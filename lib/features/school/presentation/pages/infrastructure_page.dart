@@ -203,6 +203,7 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
 
     final headers = auth.getAuthHeaders();
 
+    // Convert scores to integers for API
     final cleanScores = _scores.map((key, value) => MapEntry(key, value ?? 0));
 
     final payload = {
@@ -235,7 +236,13 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
           color = Colors.red;
         }
       } else {
-        await LocalStorageService.savePendingInfrastructure(payload);
+        // FIX: Convert scores to strings for Hive storage
+        final pendingPayload = {
+          'school': _schoolCode ?? 'N/A',
+          'scores': cleanScores.map((key, value) => MapEntry(key, value.toString())), // Convert int to String
+          'queuedAt': DateTime.now().toIso8601String(),
+        };
+        await LocalStorageService.savePendingInfrastructure(pendingPayload);
         message = 'Saved offline — will sync when online';
         color = Colors.orange;
       }
@@ -245,7 +252,13 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
       color = Colors.red;
 
       try {
-        await LocalStorageService.savePendingInfrastructure(payload);
+        // FIX: Convert scores to strings for Hive storage even on error
+        final pendingPayload = {
+          'school': _schoolCode ?? 'N/A',
+          'scores': cleanScores.map((key, value) => MapEntry(key, value.toString())), // Convert int to String
+          'queuedAt': DateTime.now().toIso8601String(),
+        };
+        await LocalStorageService.savePendingInfrastructure(pendingPayload);
         message = 'Saved offline due to error — will retry later';
         color = Colors.orange;
       } catch (hiveErr) {
@@ -254,6 +267,55 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
     }
 
     _handleEnd(message, color);
+  }
+
+  Future<void> _syncPendingInfrastructure(BuildContext context) async {
+    final pending = LocalStorageService.getPendingInfrastructure();
+    if (pending.isEmpty) return;
+
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    if (!auth.isAuthenticated || auth.token == null) return;
+
+    final headers = auth.getAuthHeaders();
+
+    for (var payload in pending) {
+      try {
+        // FIX: Convert scores back to integers for API
+        final scoresMap = <String, int>{};
+        if (payload['scores'] is Map) {
+          (payload['scores'] as Map).forEach((key, value) {
+            // Handle both String and int values from storage
+            if (value is int) {
+              scoresMap[key.toString()] = value;
+            } else if (value is String) {
+              scoresMap[key.toString()] = int.tryParse(value) ?? 0;
+            } else {
+              scoresMap[key.toString()] = 0;
+            }
+          });
+        }
+
+        final apiPayload = {
+          'school': payload['school'],
+          'scores': scoresMap,
+        };
+
+        final res = await http.post(
+          Uri.parse('${AppUrl.url}/infrastructure'),
+          headers: headers,
+          body: jsonEncode(apiPayload),
+        );
+
+        if (res.statusCode == 200 || res.statusCode == 201) {
+          await LocalStorageService.removePendingInfrastructure(payload);
+          debugPrint('✅ Synced pending infrastructure: ${payload['school']}');
+        } else {
+          debugPrint('❌ Sync failed: ${res.statusCode}');
+        }
+      } catch (e) {
+        debugPrint('❌ Pending infrastructure sync error: $e');
+      }
+    }
   }
 
   void _handleEnd(String message, Color color) {
@@ -285,32 +347,6 @@ class _InfrastructurePageState extends State<InfrastructurePage> {
           );
         }
       });
-    }
-  }
-
-  Future<void> _syncPendingInfrastructure(BuildContext context) async {
-    final pending = LocalStorageService.getPendingInfrastructure();
-    if (pending.isEmpty) return;
-
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    if (!auth.isAuthenticated || auth.token == null) return;
-
-    final headers = auth.getAuthHeaders();
-
-    for (var payload in pending) {
-      try {
-        final res = await http.post(
-          Uri.parse('${AppUrl.url}/infrastructure'),
-          headers: headers,
-          body: jsonEncode(payload),
-        );
-
-        if (res.statusCode == 200 || res.statusCode == 201) {
-          await LocalStorageService.removePendingInfrastructure(payload);
-        }
-      } catch (e) {
-        debugPrint('Pending infrastructure sync failed: $e');
-      }
     }
   }
 

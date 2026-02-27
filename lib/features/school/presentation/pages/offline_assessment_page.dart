@@ -10,7 +10,6 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_url.dart';
 import '../../../../core/services/local_storage_service.dart';
 import '../../../../core/widgets/custom_app_bar.dart';
-import '../../../../core/widgets/loading_overlay.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../providers/assessment_provider.dart';
 
@@ -147,22 +146,45 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
         if (res.statusCode != 201) throw 'Req-teachers failed: ${res.body}';
       }
 
-      // 4. Verify Students (only if data exists)
-      final verify = assessment['verifyStudents'] ?? {};
-      if ((verify['class'] ?? '').toString().trim().isNotEmpty) {
+      // 4. Legacy Verify Students (single record - kept for backward compatibility)
+      final verifyLegacy = assessment['verifyStudents'] ?? {};
+      if ((verifyLegacy['class'] ?? '').toString().trim().isNotEmpty) {
         final res = await http.post(
           Uri.parse('${AppUrl.url}/schools/verify-students'),
           headers: headers,
           body: jsonEncode({
-            ...verify,
+            ...verifyLegacy,
             'school': school,
           }),
         );
-        debugPrint('Verify-students sync: ${res.statusCode}');
-        if (res.statusCode != 201) throw 'Verify-students failed: ${res.body}';
+        debugPrint('Legacy verify-students sync: ${res.statusCode}');
+        if (res.statusCode != 201) throw 'Legacy verify-students failed: ${res.body}';
       }
 
-      // 5. Fee records
+      // 5. NEW: Verify Student Records (tabular format - multiple grades)
+      for (var record in assessment['verifyStudentRecords'] ?? []) {
+        final gradeName = record['classGrade']?.toString() ?? '';
+        if (gradeName.isEmpty) continue;
+
+        final payload = {
+          'school': school,
+          'classes': gradeName,
+          'emis_male': int.tryParse(record['emisMale']?.toString() ?? '0') ?? 0,
+          'count_male': int.tryParse(record['countMale']?.toString() ?? '0') ?? 0,
+          'emis_female': int.tryParse(record['emisFemale']?.toString() ?? '0') ?? 0,
+          'count_female': int.tryParse(record['countFemale']?.toString() ?? '0') ?? 0,
+        };
+
+        final res = await http.post(
+          Uri.parse('${AppUrl.url}/schools/verify-students'),
+          headers: headers,
+          body: jsonEncode(payload),
+        );
+        debugPrint('Verify-student row sync for $gradeName: ${res.statusCode}');
+        if (res.statusCode != 201) throw 'Verify-student row failed: ${res.body}';
+      }
+
+      // 6. Fee records
       for (var r in assessment['feeRecords'] ?? []) {
         final res = await http.post(
           Uri.parse('${AppUrl.url}/schools/fees-paid'),
@@ -296,6 +318,7 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
                       final absentCount = (assessment['absentRecords'] as List?)?.length ?? 0;
                       final staffCount = (assessment['staffRecords'] as List?)?.length ?? 0;
                       final feeCount = (assessment['feeRecords'] as List?)?.length ?? 0;
+                      final verifyCount = (assessment['verifyStudentRecords'] as List?)?.length ?? 0;
 
                       return Card(
                         margin: const EdgeInsets.only(bottom: 16),
@@ -321,7 +344,7 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
                                 Text('Queued: $date', style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Data: $absentCount absent • $staffCount staff • $feeCount fees',
+                                  'Data: $absentCount absent • $staffCount staff • $feeCount fees • $verifyCount verify',
                                   style: const TextStyle(fontSize: 13, color: Colors.grey),
                                 ),
                               ],

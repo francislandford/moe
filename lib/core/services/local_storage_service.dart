@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -13,7 +14,7 @@ class LocalStorageService {
   static const String pendingInfrastructureBox = 'pending_infrastructure';
   static const String pendingClassroomObservationBox = 'pending_classroom_observation';
 
-  // NEW: Box for failed syncs to retry later
+  // Box for failed syncs to retry later
   static const String failedSyncsBox = 'failed_syncs';
 
   // ─── Singleton + Stream for real-time connectivity ───────────────────────────
@@ -35,7 +36,7 @@ class LocalStorageService {
     await Hive.openBox(pendingLeadershipBox);
     await Hive.openBox(pendingInfrastructureBox);
     await Hive.openBox(pendingClassroomObservationBox);
-    await Hive.openBox(failedSyncsBox); // NEW: Open failed syncs box
+    await Hive.openBox(failedSyncsBox);
 
     // Start periodic check every 5 seconds
     _startConnectivityCheck();
@@ -80,7 +81,7 @@ class LocalStorageService {
   static Future<void> cacheDropdowns(Map<String, dynamic> data) async {
     final box = Hive.box(dropdownBox);
     await box.put('counties', data['counties']);
-    await box.put('all_districts', data['all_districts']); // full unfiltered districts
+    await box.put('all_districts', data['all_districts']);
     await box.put('levels', data['levels']);
     await box.put('types', data['types']);
     await box.put('ownerships', data['ownerships']);
@@ -98,16 +99,34 @@ class LocalStorageService {
     };
   }
 
+  // ─── Generic helper to safely store any data type ───────────────────────────
+  static dynamic _makeSafeForHive(dynamic data) {
+    if (data == null) return null;
+
+    // Use jsonEncode/jsonDecode to convert all types to JSON-safe format
+    try {
+      final jsonString = jsonEncode(data);
+      return jsonDecode(jsonString);
+    } catch (e) {
+      debugPrint('Error making data safe for Hive: $e');
+      // If jsonEncode fails, return the original data
+      return data;
+    }
+  }
+
   // ─── Pending Schools Queue ───────────────────────────────────────────────────
   static Future<void> savePendingSchool(Map<String, dynamic> schoolData) async {
     final box = Hive.box(pendingSchoolsBox);
     var pending = box.get('pending', defaultValue: <dynamic>[]) as List<dynamic>;
 
-    if (!schoolData.containsKey('queuedAt')) {
-      schoolData['queuedAt'] = DateTime.now().toIso8601String();
+    // Make a safe copy of the data
+    final safeData = _makeSafeForHive(schoolData) as Map<String, dynamic>;
+
+    if (!safeData.containsKey('queuedAt')) {
+      safeData['queuedAt'] = DateTime.now().toIso8601String();
     }
 
-    pending.add(schoolData);
+    pending.add(safeData);
     await box.put('pending', pending);
   }
 
@@ -137,11 +156,13 @@ class LocalStorageService {
     final box = Hive.box(pendingAssessmentsBox);
     var pending = box.get('pending', defaultValue: <dynamic>[]) as List<dynamic>;
 
-    if (!assessmentData.containsKey('queuedAt')) {
-      assessmentData['queuedAt'] = DateTime.now().toIso8601String();
+    final safeData = _makeSafeForHive(assessmentData) as Map<String, dynamic>;
+
+    if (!safeData.containsKey('queuedAt')) {
+      safeData['queuedAt'] = DateTime.now().toIso8601String();
     }
 
-    pending.add(assessmentData);
+    pending.add(safeData);
     await box.put('pending', pending);
   }
 
@@ -161,7 +182,7 @@ class LocalStorageService {
     await box.put('pending', updated);
   }
 
-  // ─── NEW: Save Failed Syncs for Retry ───────────────────────────────────────
+  // ─── Save Failed Syncs for Retry ───────────────────────────────────────
   static Future<void> saveFailedSyncs(List<Map<String, dynamic>> failedItems) async {
     final box = Hive.box(failedSyncsBox);
 
@@ -172,8 +193,13 @@ class LocalStorageService {
       return <String, dynamic>{};
     }).toList();
 
+    // Make all items safe
+    final safeFailedItems = failedItems.map((item) =>
+    _makeSafeForHive(item) as Map<String, dynamic>
+    ).toList();
+
     // Merge with new failed items (avoid duplicates by queuedAt)
-    final allItems = {...existingMaps, ...failedItems}.toList();
+    final allItems = {...existingMaps, ...safeFailedItems}.toList();
 
     await box.put('failed', allItems);
     debugPrint('Saved ${failedItems.length} failed items to retry queue. Total: ${allItems.length}');
@@ -207,11 +233,13 @@ class LocalStorageService {
     final box = Hive.box(pendingDocumentChecksBox);
     var pending = box.get('pending', defaultValue: <dynamic>[]) as List<dynamic>;
 
-    if (!payload.containsKey('queuedAt')) {
-      payload['queuedAt'] = DateTime.now().toIso8601String();
+    final safePayload = _makeSafeForHive(payload) as Map<String, dynamic>;
+
+    if (!safePayload.containsKey('queuedAt')) {
+      safePayload['queuedAt'] = DateTime.now().toIso8601String();
     }
 
-    pending.add(payload);
+    pending.add(safePayload);
     await box.put('pending', pending);
   }
 
@@ -236,11 +264,13 @@ class LocalStorageService {
     final box = Hive.box(pendingLeadershipBox);
     var pending = box.get('pending', defaultValue: <dynamic>[]) as List<dynamic>;
 
-    if (!payload.containsKey('queuedAt')) {
-      payload['queuedAt'] = DateTime.now().toIso8601String();
+    final safePayload = _makeSafeForHive(payload) as Map<String, dynamic>;
+
+    if (!safePayload.containsKey('queuedAt')) {
+      safePayload['queuedAt'] = DateTime.now().toIso8601String();
     }
 
-    pending.add(payload);
+    pending.add(safePayload);
     await box.put('pending', pending);
   }
 
@@ -248,7 +278,18 @@ class LocalStorageService {
     final box = Hive.box(pendingLeadershipBox);
     final rawList = box.get('pending', defaultValue: <dynamic>[]) as List<dynamic>;
     return rawList.map((item) {
-      if (item is Map) return Map<String, dynamic>.from(item);
+      if (item is Map) {
+        final map = Map<String, dynamic>.from(item);
+        // Handle scores if present
+        if (map.containsKey('scores') && map['scores'] is Map) {
+          final scoresMap = <String, dynamic>{};
+          (map['scores'] as Map).forEach((key, value) {
+            scoresMap[key.toString()] = value;
+          });
+          map['scores'] = scoresMap;
+        }
+        return map;
+      }
       return <String, dynamic>{};
     }).toList();
   }
@@ -265,11 +306,14 @@ class LocalStorageService {
     final box = Hive.box(pendingInfrastructureBox);
     var pending = box.get('pending', defaultValue: <dynamic>[]) as List<dynamic>;
 
-    if (!payload.containsKey('queuedAt')) {
-      payload['queuedAt'] = DateTime.now().toIso8601String();
+    // Make the payload safe for Hive by converting all types to JSON-safe formats
+    final safePayload = _makeSafeForHive(payload) as Map<String, dynamic>;
+
+    if (!safePayload.containsKey('queuedAt')) {
+      safePayload['queuedAt'] = DateTime.now().toIso8601String();
     }
 
-    pending.add(payload);
+    pending.add(safePayload);
     await box.put('pending', pending);
   }
 
@@ -277,7 +321,18 @@ class LocalStorageService {
     final box = Hive.box(pendingInfrastructureBox);
     final rawList = box.get('pending', defaultValue: <dynamic>[]) as List<dynamic>;
     return rawList.map((item) {
-      if (item is Map) return Map<String, dynamic>.from(item);
+      if (item is Map) {
+        final map = Map<String, dynamic>.from(item);
+        // Ensure scores are properly accessible
+        if (map.containsKey('scores') && map['scores'] is Map) {
+          final scoresMap = <String, dynamic>{};
+          (map['scores'] as Map).forEach((key, value) {
+            scoresMap[key.toString()] = value;
+          });
+          map['scores'] = scoresMap;
+        }
+        return map;
+      }
       return <String, dynamic>{};
     }).toList();
   }
@@ -294,11 +349,13 @@ class LocalStorageService {
     final box = Hive.box(pendingClassroomObservationBox);
     var pending = box.get('pending', defaultValue: <dynamic>[]) as List<dynamic>;
 
-    if (!payload.containsKey('queuedAt')) {
-      payload['queuedAt'] = DateTime.now().toIso8601String();
+    final safePayload = _makeSafeForHive(payload) as Map<String, dynamic>;
+
+    if (!safePayload.containsKey('queuedAt')) {
+      safePayload['queuedAt'] = DateTime.now().toIso8601String();
     }
 
-    pending.add(payload);
+    pending.add(safePayload);
     await box.put('pending', pending);
   }
 
@@ -321,7 +378,8 @@ class LocalStorageService {
   // ─── General Cache Helpers ───────────────────────────────────────────────────
   static Future<void> saveToCache(String key, dynamic data) async {
     final box = Hive.box(dropdownBox);
-    await box.put(key, data);
+    final safeData = _makeSafeForHive(data);
+    await box.put(key, safeData);
   }
 
   static dynamic getFromCache(String key) {

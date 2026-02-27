@@ -4,12 +4,15 @@ import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'core/constants/app_colors.dart';
 import 'core/constants/app_font.dart';
 import 'core/services/local_storage_service.dart';
 import 'core/services/parent_local_storage_service.dart';
 import 'core/services/student_local_storage_service.dart';
 import 'core/services/textbooks_teaching_local_storage.dart';
+import 'core/services/data_preloader_service.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/app_theme.dart' as AppTheme;
 import 'core/theme/theme_provider.dart';
 import 'features/school/presentation/providers/school_provider.dart';
 import 'routing/app_router.dart';
@@ -29,17 +32,26 @@ void main() async {
     debugPrint('Init error: $e\n$stack');
   }
 
-  runApp(const MyApp());
+  // Create auth provider first
+  final authProvider = AuthProvider();
+
+  // Wait for auth data to load
+  await authProvider.waitForInitialization();
+
+  // Run app
+  runApp(MyApp(authProvider: authProvider));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final AuthProvider authProvider;
+
+  const MyApp({super.key, required this.authProvider});
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider.value(value: authProvider),
         ChangeNotifierProvider(create: (_) => SchoolProvider()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => AssessmentProvider()),
@@ -49,13 +61,10 @@ class MyApp extends StatelessWidget {
           return MaterialApp.router(
             title: 'School Quality Assessment',
             debugShowCheckedModeBanner: false,
-
-            // Apply global font family here via theme
             theme: themeProvider.currentTheme.copyWith(
               textTheme: themeProvider.currentTheme.textTheme.apply(
-                fontFamily: AppFont.primaryFont, // ← This applies to ALL text in the app
+                fontFamily: AppFont.primaryFont,
               ),
-              // Optional: Apply to other text styles (AppBar, buttons, etc.)
               appBarTheme: themeProvider.currentTheme.appBarTheme.copyWith(
                 titleTextStyle: TextStyle(
                   fontFamily: AppFont.primaryFont,
@@ -70,9 +79,7 @@ class MyApp extends StatelessWidget {
                 ),
               ),
             ),
-
             routerConfig: createRouter(authProvider),
-
             builder: (context, routerChild) {
               return DefaultTextStyle(
                 style: TextStyle(
@@ -91,5 +98,16 @@ class MyApp extends StatelessWidget {
         },
       ),
     );
+  }
+}
+
+// Add this extension to AuthProvider to wait for initialization
+extension AuthProviderExtension on AuthProvider {
+  Future<void> waitForInitialization() async {
+    // The constructor already calls _loadData()
+    // Just wait for loading to complete
+    while (isLoading) {
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
   }
 }

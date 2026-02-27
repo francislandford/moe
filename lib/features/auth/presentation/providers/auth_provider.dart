@@ -3,12 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:moe/core/constants/app_url.dart'; // your AppUrl class
+import 'package:moe/core/constants/app_url.dart';
 
 class AuthProvider with ChangeNotifier {
-  // ────────────────────────────────────────────────
-  // Config
-  // ────────────────────────────────────────────────
   static final String _baseUrl = AppUrl.url;
   static const String _tokenKey = 'auth_token';
   static const String _userKey = 'auth_user';
@@ -18,18 +15,16 @@ class AuthProvider with ChangeNotifier {
   String? _token;
   Map<String, dynamic>? _user;
   bool _isLoading = false;
+  String? _errorMessage;
 
-  // Getters
   bool get isAuthenticated => _token != null && _token!.isNotEmpty;
   bool get isLoading => _isLoading;
   String? get token => _token;
   Map<String, dynamic>? get user => _user;
+  String? get errorMessage => _errorMessage;
 
-  // NEW: Get user ID with proper formatting
   int get userId {
-    // Try to get ID from user object - adjust the key based on your API response
     if (_user != null) {
-      // Common keys for user ID in API responses
       if (_user!.containsKey('id')) {
         return _user!['id'] as int? ?? 0;
       } else if (_user!.containsKey('user_id')) {
@@ -41,7 +36,6 @@ class AuthProvider with ChangeNotifier {
     return 0;
   }
 
-  // Onboarding flag
   bool _onboardingCompleted = false;
   bool get isOnboardingCompleted => _onboardingCompleted;
 
@@ -49,9 +43,6 @@ class AuthProvider with ChangeNotifier {
     _loadData();
   }
 
-  // ────────────────────────────────────────────────
-  // Load saved auth & onboarding data
-  // ────────────────────────────────────────────────
   Future<void> _loadData() async {
     _isLoading = true;
     notifyListeners();
@@ -74,17 +65,18 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // ────────────────────────────────────────────────
-  // Login → returns true on success, false on failure
-  // ────────────────────────────────────────────────
+  // Simplified login method
   Future<bool> login({
     required String email,
     required String password,
   }) async {
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {
+      debugPrint('Attempting login with: $email');
+
       final response = await http.post(
         Uri.parse('$_baseUrl/login'),
         headers: {'Content-Type': 'application/json'},
@@ -94,38 +86,52 @@ class AuthProvider with ChangeNotifier {
         }),
       );
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = jsonDecode(response.body);
+      debugPrint('Login response status: ${response.statusCode}');
+      debugPrint('Login response body: ${response.body}');
 
-        _token = data['token']?.toString();
-        _user = data['user'] as Map<String, dynamic>?;
+      final responseData = jsonDecode(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        _token = responseData['token']?.toString();
+        _user = responseData['user'] as Map<String, dynamic>?;
 
         if (_token != null && _token!.isNotEmpty) {
           await _storage.write(key: _tokenKey, value: _token);
           if (_user != null) {
             await _storage.write(key: _userKey, value: jsonEncode(_user));
           }
+          _isLoading = false;
           notifyListeners();
           return true;
         }
       }
 
-      // Failed but no exception → e.g. 401/422
-      debugPrint('Login failed with status: ${response.statusCode}');
+      // Extract error message
+      if (responseData is Map) {
+        if (responseData.containsKey('message')) {
+          _errorMessage = responseData['message'].toString();
+        } else if (responseData.containsKey('error')) {
+          _errorMessage = responseData['error'].toString();
+        } else {
+          _errorMessage = 'Login failed. Please check your credentials.';
+        }
+      } else {
+        _errorMessage = 'Login failed. Please check your credentials.';
+      }
+
+      _isLoading = false;
+      notifyListeners();
       return false;
 
     } catch (e) {
       debugPrint('Login exception: $e');
-      rethrow; // Let UI catch and show specific message
-    } finally {
+      _errorMessage = 'Network error. Please check your connection.';
       _isLoading = false;
       notifyListeners();
+      return false;
     }
   }
 
-  // ────────────────────────────────────────────────
-  // Logout
-  // ────────────────────────────────────────────────
   Future<void> logout() async {
     _isLoading = true;
     notifyListeners();
@@ -148,14 +154,12 @@ class AuthProvider with ChangeNotifier {
     await _storage.delete(key: _userKey);
     _token = null;
     _user = null;
+    _errorMessage = null;
 
     _isLoading = false;
     notifyListeners();
   }
 
-  // ────────────────────────────────────────────────
-  // Onboarding completion
-  // ────────────────────────────────────────────────
   Future<void> completeOnboarding() async {
     _onboardingCompleted = true;
     final prefs = await SharedPreferences.getInstance();
@@ -163,9 +167,6 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // ────────────────────────────────────────────────
-  // Auth headers helper for future API calls
-  // ────────────────────────────────────────────────
   Map<String, String> getAuthHeaders() {
     return {
       if (_token != null) 'Authorization': 'Bearer $_token',
@@ -174,15 +175,19 @@ class AuthProvider with ChangeNotifier {
     };
   }
 
-  // Optional: Get formatted user ID as string with leading zeros
   String getFormattedUserId() {
     final id = userId;
     if (id < 10) {
-      return '00$id'; // 1 -> 001
+      return '00$id';
     } else if (id < 100) {
-      return '0$id'; // 23 -> 023
+      return '0$id';
     } else {
-      return id.toString(); // 123 -> 123
+      return id.toString();
     }
+  }
+
+  void clearError() {
+    _errorMessage = null;
+    notifyListeners();
   }
 }

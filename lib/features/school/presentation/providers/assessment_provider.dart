@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/constants/app_url.dart';
 import '../../../../core/services/local_storage_service.dart';
+import '../../../../core/services/data_preloader_service.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 
 class AssessmentProvider with ChangeNotifier {
@@ -27,43 +28,40 @@ class AssessmentProvider with ChangeNotifier {
   String reqStudents = '';
   String reqNumRequired = '';
 
-  // Legacy verify students (single fields - kept as requested)
+  // Legacy verify students
   String verifyClass = '';
   String emisMale = '';
   String countMale = '';
   String emisFemale = '';
   String countFemale = '';
 
-  // Grades for Verify Students dropdown (shared across rows)
+  // Grades from DataPreloaderService
   List<Map<String, dynamic>> gradesForLevel = [];
-  bool isLoadingGrades = false; // For background refresh indicator
-  String? gradesError; // For logging only, not shown to users
+  bool isLoadingGrades = false;
+  String? gradesError;
 
-  // Positions for Staff dropdown
+  // Positions from DataPreloaderService
   List<Map<String, dynamic>> _positions = [];
   bool _isLoadingPositions = false;
 
   List<Map<String, dynamic>> get positions => _positions;
   bool get isLoadingPositions => _isLoadingPositions;
 
-  // Fees from API
+  // Fees from DataPreloaderService
   List<Map<String, dynamic>> _availableFees = [];
   bool _isLoadingFees = false;
 
   List<Map<String, dynamic>> get availableFees => _availableFees;
   bool get isLoadingFees => _isLoadingFees;
 
-  // Map to store verify student records by grade name (for tabular format)
+  // Maps for tabular data
   final Map<String, Map<String, dynamic>> _verifyStudentRecordsByGrade = {};
-
-  // Map to store fee records by fee name (for tabular format)
   final Map<String, Map<String, dynamic>> _feeRecordsByType = {};
 
   bool isSubmitting = false;
   String? lastError;
   bool lastOffline = false;
 
-  // Pending count getter
   int get pendingCount => LocalStorageService.getPendingAssessments().length;
 
   // ─── Add / Remove / Update Methods ──────────────────────────────────────────
@@ -130,69 +128,78 @@ class AssessmentProvider with ChangeNotifier {
     }
   }
 
-  void addVerifyStudent() {
-    verifyStudentRecords.add({
-      'classGrade': null,
-      'verifyClass': '',
-      'emisMale': TextEditingController(),
-      'countMale': TextEditingController(),
-      'emisFemale': TextEditingController(),
-      'countFemale': TextEditingController(),
-    });
+  // ─── Load from DataPreloaderService ─────────────────────────────────────
+
+  void loadGradesFromCache(String schoolLevel) {
+    gradesForLevel = DataPreloaderService.getGradesForLevel(schoolLevel);
     notifyListeners();
   }
 
-  void removeVerifyStudent(int index) {
-    if (index >= 0 && index < verifyStudentRecords.length) {
-      verifyStudentRecords.removeAt(index);
-      notifyListeners();
-    }
-  }
-
-  void updateVerifyStudent(int index, String key, dynamic value) {
-    if (index >= 0 && index < verifyStudentRecords.length) {
-      verifyStudentRecords[index][key] = value;
-      notifyListeners();
-    }
-  }
-
-  // ─── Positions Methods ────────────────────────────────────────────────────
-
-  // Load positions from cache
   void loadPositionsFromCache() {
-    try {
-      final cachedPositions = LocalStorageService.getFromCache('positions');
+    _positions = DataPreloaderService.getCachedData('positions');
+    notifyListeners();
+  }
 
-      if (cachedPositions != null && cachedPositions is List) {
-        _positions = cachedPositions.map((position) {
-          if (position is Map) {
-            return Map<String, dynamic>.from(position);
-          }
-          return <String, dynamic>{};
-        }).toList();
-        debugPrint('✅ Loaded ${_positions.length} positions from cache');
-      } else {
-        debugPrint('ℹ️ No cached positions found');
-        _positions = [];
+  void loadFeesFromCache() {
+    _availableFees = DataPreloaderService.getCachedData('fees');
+    _initializeFeeRecords();
+    notifyListeners();
+  }
+
+  // ─── Fetch methods (background refresh) ────────────────────────────────
+
+  Future<void> fetchGradesForLevel(String schoolLevel, BuildContext context) async {
+    debugPrint('🔄 Fetching grades for level: $schoolLevel');
+
+    final hadCachedData = gradesForLevel.isNotEmpty;
+    if (!hadCachedData) {
+      isLoadingGrades = true;
+      notifyListeners();
+    }
+
+    final isOnline = await LocalStorageService.isOnline();
+    if (!isOnline) {
+      isLoadingGrades = false;
+      notifyListeners();
+      return;
+    }
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.isAuthenticated || authProvider.token == null) {
+      isLoadingGrades = false;
+      notifyListeners();
+      return;
+    }
+
+    final token = authProvider.token!;
+    final headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $token',
+      'Accept': 'application/json',
+    };
+
+    try {
+      final uri = Uri.parse('${AppUrl.url}/grades?level=$schoolLevel');
+      final res = await http.get(uri, headers: headers);
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final loaded = _extractListFromResponse(data);
+
+        gradesForLevel = loaded;
+        debugPrint('✅ Loaded ${gradesForLevel.length} grades from API');
+
+        // Update cache
+        await LocalStorageService.saveToCache('grades_${schoolLevel.toLowerCase()}', loaded);
       }
     } catch (e) {
-      debugPrint('❌ Error loading positions from cache: $e');
-      _positions = [];
-    }
-    notifyListeners();
-  }
-
-  // Cache positions for offline use
-  Future<void> _cachePositions(List<Map<String, dynamic>> positions) async {
-    try {
-      await LocalStorageService.saveToCache('positions', positions);
-      debugPrint('✅ Cached ${positions.length} positions');
-    } catch (e) {
-      debugPrint('❌ Error caching positions: $e');
+      debugPrint('❌ Fetch grades error: $e');
+    } finally {
+      isLoadingGrades = false;
+      notifyListeners();
     }
   }
 
-  // Fetch positions from API
   Future<void> fetchPositions(BuildContext context) async {
     debugPrint('🔄 Fetching positions');
 
@@ -202,18 +209,15 @@ class AssessmentProvider with ChangeNotifier {
       notifyListeners();
     }
 
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    if (!authProvider.isAuthenticated || authProvider.token == null) {
-      debugPrint('❌ Cannot fetch positions: User not authenticated');
+    final isOnline = await LocalStorageService.isOnline();
+    if (!isOnline) {
       _isLoadingPositions = false;
       notifyListeners();
       return;
     }
 
-    final isOnline = await LocalStorageService.isOnline();
-
-    if (!isOnline) {
-      debugPrint('📱 Offline: using cached positions. Count: ${_positions.length}');
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.isAuthenticated || authProvider.token == null) {
       _isLoadingPositions = false;
       notifyListeners();
       return;
@@ -227,85 +231,115 @@ class AssessmentProvider with ChangeNotifier {
     };
 
     try {
-      // Adjust endpoint as needed - this might be different in your API
       final response = await http.get(
         Uri.parse('${AppUrl.url}/positions'),
         headers: headers,
       );
 
-      debugPrint('📥 Positions response status: ${response.statusCode}');
-
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        List<Map<String, dynamic>> loaded = [];
-
-        if (data is List) {
-          loaded = List<Map<String, dynamic>>.from(data);
-        } else if (data is Map && data.containsKey('data')) {
-          loaded = List<Map<String, dynamic>>.from(data['data']);
-        }
-
-        _positions = loaded;
+        _positions = _extractListFromResponse(data);
         debugPrint('✅ Loaded ${_positions.length} positions from API');
-
-        // Cache for offline use
-        await _cachePositions(_positions);
-      } else {
-        debugPrint('❌ Failed to load positions - status ${response.statusCode}');
+        await LocalStorageService.saveToCache('positions', _positions);
       }
-    } catch (e, stack) {
+    } catch (e) {
       debugPrint('❌ Fetch positions error: $e');
-      debugPrint('Stack trace: $stack');
     } finally {
       _isLoadingPositions = false;
       notifyListeners();
     }
   }
 
-  // ─── Fees Methods ────────────────────────────────────────────────────────
+  Future<void> fetchFees(BuildContext context) async {
+    debugPrint('🔄 Fetching fees');
 
-  // Load fees from cache
-  void loadFeesFromCache() {
+    final hadCachedData = _availableFees.isNotEmpty;
+    if (!hadCachedData) {
+      _isLoadingFees = true;
+      notifyListeners();
+    }
+
+    final isOnline = await LocalStorageService.isOnline();
+    if (!isOnline) {
+      _isLoadingFees = false;
+      notifyListeners();
+      return;
+    }
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.isAuthenticated || authProvider.token == null) {
+      _isLoadingFees = false;
+      notifyListeners();
+      return;
+    }
+
+    final token = authProvider.token!;
+    final headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $token',
+      'Accept': 'application/json',
+    };
+
     try {
-      final cachedFees = LocalStorageService.getFromCache('fees');
+      final response = await http.get(
+        Uri.parse('${AppUrl.url}/fees'),
+        headers: headers,
+      );
 
-      if (cachedFees != null && cachedFees is List) {
-        _availableFees = cachedFees.map((fee) {
-          if (fee is Map) {
-            return Map<String, dynamic>.from(fee);
-          }
-          return <String, dynamic>{};
-        }).toList();
-        debugPrint('✅ Loaded ${_availableFees.length} fees from cache');
-
-        // Initialize fee records for each fee type
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        _availableFees = _extractListFromResponse(data);
+        debugPrint('✅ Loaded ${_availableFees.length} fees from API');
         _initializeFeeRecords();
-      } else {
-        debugPrint('ℹ️ No cached fees found');
-        _availableFees = [];
+        await LocalStorageService.saveToCache('fees', _availableFees);
       }
     } catch (e) {
-      debugPrint('❌ Error loading fees from cache: $e');
-      _availableFees = [];
-    }
-    notifyListeners();
-  }
-
-  // Cache fees for offline use
-  Future<void> _cacheFees(List<Map<String, dynamic>> fees) async {
-    try {
-      await LocalStorageService.saveToCache('fees', fees);
-      debugPrint('✅ Cached ${fees.length} fees');
-    } catch (e) {
-      debugPrint('❌ Error caching fees: $e');
+      debugPrint('❌ Fetch fees error: $e');
+    } finally {
+      _isLoadingFees = false;
+      notifyListeners();
     }
   }
 
-  // Initialize fee records for each fee type
+  List<Map<String, dynamic>> _extractListFromResponse(dynamic data) {
+    if (data is List) {
+      return List<Map<String, dynamic>>.from(data);
+    } else if (data is Map && data.containsKey('data')) {
+      if (data['data'] is List) {
+        return List<Map<String, dynamic>>.from(data['data']);
+      }
+    }
+    return [];
+  }
+
+  // ─── Verify Students Tabular Methods ──────────────────────────────────────
+
+  void ensureVerifyStudentRecord(String gradeName) {
+    if (!_verifyStudentRecordsByGrade.containsKey(gradeName)) {
+      _verifyStudentRecordsByGrade[gradeName] = {
+        'classGrade': gradeName,
+        'emisMale': TextEditingController(),
+        'countMale': TextEditingController(),
+        'emisFemale': TextEditingController(),
+        'countFemale': TextEditingController(),
+      };
+    }
+  }
+
+  Map<String, dynamic> getVerifyStudentRecord(String gradeName) {
+    return _verifyStudentRecordsByGrade[gradeName]!;
+  }
+
+  List<Map<String, dynamic>> getAllVerifyStudentRecords() {
+    return _verifyStudentRecordsByGrade.values.toList();
+  }
+
+  // ─── Fees Tabular Methods ─────────────────────────────────────────────────
+
   void _initializeFeeRecords() {
     _feeRecordsByType.clear();
     for (var fee in _availableFees) {
-      final feeName = fee['fee']?.toString() ?? fee['fee']?.toString() ?? 'Unknown';
+      final feeName = fee['name']?.toString() ?? fee['fee']?.toString() ?? 'Unknown';
       _feeRecordsByType[feeName] = {
         'fee': feeName,
         'pay': 'Yes',
@@ -316,127 +350,14 @@ class AssessmentProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // Fetch fees from API
-  Future<void> fetchFees(BuildContext context) async {
-    debugPrint('🔄 Fetching fees');
-
-    final hadCachedData = _availableFees.isNotEmpty;
-    if (!hadCachedData) {
-      _isLoadingFees = true;
-      notifyListeners();
-    }
-
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    if (!authProvider.isAuthenticated || authProvider.token == null) {
-      debugPrint('❌ Cannot fetch fees: User not authenticated');
-      _isLoadingFees = false;
-      notifyListeners();
-      return;
-    }
-
-    final isOnline = await LocalStorageService.isOnline();
-
-    if (!isOnline) {
-      debugPrint('📱 Offline: using cached fees. Count: ${_availableFees.length}');
-      _isLoadingFees = false;
-      notifyListeners();
-      return;
-    }
-
-    final token = authProvider.token!;
-    final headers = {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $token',
-      'Accept': 'application/json',
-    };
-
-    try {
-      // Adjust endpoint as needed
-      final response = await http.get(
-        Uri.parse('${AppUrl.url}/fees'), // Update endpoint as needed
-        headers: headers,
-      );
-
-      debugPrint('📥 Fees response status: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        List<Map<String, dynamic>> loaded = [];
-
-        if (data is List) {
-          loaded = List<Map<String, dynamic>>.from(data);
-        } else if (data is Map && data.containsKey('data')) {
-          loaded = List<Map<String, dynamic>>.from(data['data']);
-        }
-
-        _availableFees = loaded;
-        debugPrint('✅ Loaded ${_availableFees.length} fees from API');
-
-        // Initialize fee records for each fee type
-        _initializeFeeRecords();
-
-        // Cache for offline use
-        await _cacheFees(_availableFees);
-      } else {
-        debugPrint('❌ Failed to load fees - status ${response.statusCode}');
-      }
-    } catch (e, stack) {
-      debugPrint('❌ Fetch fees error: $e');
-      debugPrint('Stack trace: $stack');
-    } finally {
-      _isLoadingFees = false;
-      notifyListeners();
-    }
-  }
-
-  // ─── Verify Students Tabular Methods ──────────────────────────────────────
-
-  // Ensure record exists for a grade
-  void ensureVerifyStudentRecord(String gradeName) {
-    if (!_verifyStudentRecordsByGrade.containsKey(gradeName)) {
-      _verifyStudentRecordsByGrade[gradeName] = {
-        'classGrade': gradeName,
-        'emisMale': TextEditingController(),
-        'countMale': TextEditingController(),
-        'emisFemale': TextEditingController(),
-        'countFemale': TextEditingController(),
-      };
-      notifyListeners();
-    }
-  }
-
-  // Get record for a grade
-  Map<String, dynamic> getVerifyStudentRecord(String gradeName) {
-    return _verifyStudentRecordsByGrade[gradeName]!;
-  }
-
-  // Get all verify student records as list (for submission)
-  List<Map<String, dynamic>> getAllVerifyStudentRecords() {
-    return _verifyStudentRecordsByGrade.values.toList();
-  }
-
-  // Update verify student record field
-  void updateVerifyStudentRecord(String gradeName, String field, String value) {
-    if (_verifyStudentRecordsByGrade.containsKey(gradeName)) {
-      final controller = _verifyStudentRecordsByGrade[gradeName]![field] as TextEditingController;
-      controller.text = value;
-      notifyListeners();
-    }
-  }
-
-  // ─── Fees Tabular Methods ─────────────────────────────────────────────────
-
-  // Get all fee records as list (for UI and submission)
   List<Map<String, dynamic>> getAllFeeRecords() {
     return _feeRecordsByType.values.toList();
   }
 
-  // Get fee record by fee name
   Map<String, dynamic>? getFeeRecord(String feeName) {
     return _feeRecordsByType[feeName];
   }
 
-  // Update fee record
   void updateFeeRecord(String feeName, String key, dynamic value) {
     if (_feeRecordsByType.containsKey(feeName)) {
       if (key == 'pay') {
@@ -449,143 +370,8 @@ class AssessmentProvider with ChangeNotifier {
     }
   }
 
-  // ─── Load grades from cache (offline-first) ───────────────────────────
-  void loadGradesFromCache(String schoolLevel) {
-    try {
-      // Try to get grades from cache using the specific key
-      final cachedGrades = LocalStorageService.getFromCache('grades_${schoolLevel.toLowerCase()}');
+  // ─── Submission methods ───────────────────────────────────────────────
 
-      if (cachedGrades != null && cachedGrades is List) {
-        gradesForLevel = cachedGrades.map((grade) {
-          if (grade is Map) {
-            return Map<String, dynamic>.from(grade);
-          }
-          return <String, dynamic>{};
-        }).toList();
-        debugPrint('✅ Loaded ${gradesForLevel.length} grades from cache for level: $schoolLevel');
-      } else {
-        debugPrint('ℹ️ No cached grades found for level: $schoolLevel');
-        gradesForLevel = [];
-      }
-    } catch (e) {
-      debugPrint('❌ Error loading grades from cache: $e');
-      gradesForLevel = [];
-    }
-    notifyListeners();
-  }
-
-  // ─── Cache grades for offline use ─────────────────────────────────────
-  Future<void> _cacheGrades(String schoolLevel, List<Map<String, dynamic>> grades) async {
-    try {
-      final cacheKey = 'grades_${schoolLevel.toLowerCase()}';
-      await LocalStorageService.saveToCache(cacheKey, grades);
-      debugPrint('✅ Cached ${grades.length} grades for level: $schoolLevel');
-    } catch (e) {
-      debugPrint('❌ Error caching grades: $e');
-    }
-  }
-
-  // ─── Fetch grades for Verify Students dropdown (offline-first) ───
-  Future<void> fetchGradesForLevel(String schoolLevel, BuildContext context) async {
-    debugPrint('🔄 Fetching grades for level: $schoolLevel');
-
-    // Don't show loading if we already have cached data
-    final hadCachedData = gradesForLevel.isNotEmpty;
-
-    // Only show loading if we have no cached data
-    if (!hadCachedData) {
-      isLoadingGrades = true;
-      notifyListeners();
-    }
-
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    if (!authProvider.isAuthenticated || authProvider.token == null) {
-      debugPrint('❌ Cannot fetch grades: User is not authenticated');
-      gradesError = 'Authentication required to fetch grades';
-      isLoadingGrades = false;
-      notifyListeners();
-      return;
-    }
-
-    final isOnline = await LocalStorageService.isOnline();
-
-    // If offline, just use cache (already loaded) and ensure we have data
-    if (!isOnline) {
-      debugPrint('📱 Offline: using cached grades. Count: ${gradesForLevel.length}');
-      isLoadingGrades = false;
-
-      // If we have no cached grades, show a user-friendly message
-      if (gradesForLevel.isEmpty) {
-        debugPrint('⚠️ No cached grades available offline');
-      }
-
-      notifyListeners();
-      return;
-    }
-
-    final token = authProvider.token!;
-    final headers = {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $token',
-      'Accept': 'application/json',
-    };
-
-    try {
-      final uri = Uri.parse('${AppUrl.url}/level/grades?level=$schoolLevel');
-      debugPrint('🌐 Requesting: $uri');
-      final res = await http.get(uri, headers: headers);
-
-      debugPrint('📥 Grades response status: ${res.statusCode}');
-
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        List<Map<String, dynamic>> loaded = [];
-
-        if (data is List) {
-          loaded = List<Map<String, dynamic>>.from(data);
-        } else if (data is Map && data.containsKey('data')) {
-          loaded = List<Map<String, dynamic>>.from(data['data']);
-        }
-
-        // Deduplicate by 'id' or 'name' (use whichever is available)
-        final seen = <String>{};
-        gradesForLevel = loaded.where((grade) {
-          // Try to use id first, fall back to name
-          final id = grade['id']?.toString() ?? grade['name']?.toString();
-          if (id == null || id.isEmpty) return false;
-          if (seen.contains(id)) return false;
-          seen.add(id);
-          return true;
-        }).toList();
-
-        debugPrint('✅ Loaded ${gradesForLevel.length} unique grades from API');
-
-        // Cache for offline use
-        await _cacheGrades(schoolLevel, gradesForLevel);
-        gradesError = null;
-      } else {
-        debugPrint('❌ Failed to load grades - status ${res.statusCode}');
-        gradesError = 'API error: ${res.statusCode}';
-        // Keep using cached data if available
-        if (gradesForLevel.isEmpty) {
-          debugPrint('⚠️ No cached grades available either');
-        }
-      }
-    } catch (e, stack) {
-      debugPrint('❌ Fetch grades error: $e');
-      debugPrint('Stack trace: $stack');
-      gradesError = 'Network error: $e';
-      // Keep using cached data
-      if (gradesForLevel.isEmpty) {
-        debugPrint('⚠️ No cached grades available after network error');
-      }
-    } finally {
-      isLoadingGrades = false;
-      notifyListeners();
-    }
-  }
-
-  // ─── Submission – Offline-first + Queue ──────────────────────────
   Future<bool> submitAllData(BuildContext context) async {
     isSubmitting = true;
     lastError = null;

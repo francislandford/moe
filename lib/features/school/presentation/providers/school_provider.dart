@@ -7,17 +7,16 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/constants/app_url.dart';
 import '../../../../core/services/local_storage_service.dart';
+import '../../../../core/services/data_preloader_service.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 
 class SchoolProvider with ChangeNotifier {
   bool _isLoading = false;
   bool get isLoading => _isLoading;
 
-  // Track district loading state separately
   bool _isLoadingDistricts = false;
   bool get isLoadingDistricts => _isLoadingDistricts;
 
-  // Track session school count for auto-generation
   int _sessionSchoolCount = 0;
   int get sessionSchoolCount => _sessionSchoolCount;
 
@@ -34,10 +33,7 @@ class SchoolProvider with ChangeNotifier {
   List<Map<String, dynamic>> get types => _types;
   List<Map<String, dynamic>> get ownerships => _ownerships;
 
-  // Track selected county for background updates
   String? _selectedCounty;
-
-  // Store user's county
   String? _userCounty;
   String? get userCounty => _userCounty;
 
@@ -51,63 +47,38 @@ class SchoolProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // Public method to load from cache immediately
+  // Load from cache using DataPreloaderService
   void loadFromCache() {
     _loadFromCache();
   }
 
+  // Replace the _loadFromCache method with:
   void _loadFromCache() {
-    final cached = LocalStorageService.getCachedDropdowns();
+    _counties = DataPreloaderService.getCachedData('counties');
+    _allDistricts = DataPreloaderService.getCachedData('all_districts');
+    _levels = DataPreloaderService.getCachedData('levels');
+    _types = DataPreloaderService.getCachedData('types');
+    _ownerships = DataPreloaderService.getCachedData('ownerships');
 
-    _counties = (cached['counties'] as List<dynamic>?)
-        ?.map((e) => Map<String, dynamic>.from(e as Map))
-        .toList() ??
-        [];
-
-    _allDistricts = (cached['all_districts'] as List<dynamic>?)
-        ?.map((e) => Map<String, dynamic>.from(e as Map))
-        .toList() ??
-        [];
-
-    _levels = (cached['levels'] as List<dynamic>?)
-        ?.map((e) => Map<String, dynamic>.from(e as Map))
-        .toList() ??
-        [];
-
-    _types = (cached['types'] as List<dynamic>?)
-        ?.map((e) => Map<String, dynamic>.from(e as Map))
-        .toList() ??
-        [];
-
-    _ownerships = (cached['ownerships'] as List<dynamic>?)
-        ?.map((e) => Map<String, dynamic>.from(e as Map))
-        .toList() ??
-        [];
-
-    // Load user county from cache
     final cachedUserCounty = LocalStorageService.getFromCache('user_county');
     if (cachedUserCounty != null) {
       _userCounty = cachedUserCounty as String;
-      debugPrint('✅ Loaded user county from cache: $_userCounty');
     }
 
     _districts = [];
     notifyListeners();
   }
 
-  // ─── Get count of schools submitted by the current user ─────────────
+  // Get user school count
   Future<int> getUserSchoolCount(int userId, String token) async {
     try {
       int totalCount = 0;
 
-      // 1. First, check if we have cached schools
       final cachedSchools = LocalStorageService.getFromCache('my_schools');
       if (cachedSchools != null && cachedSchools is List) {
         totalCount = cachedSchools.length;
-        debugPrint('📊 Cached schools count: $totalCount');
       }
 
-      // 2. If online, fetch fresh count from API
       final isOnline = await LocalStorageService.isOnline();
       if (isOnline && token.isNotEmpty) {
         try {
@@ -126,26 +97,18 @@ class SchoolProvider with ChangeNotifier {
             final data = jsonDecode(response.body);
             final List<dynamic> schoolList = data['data'] ?? [];
             totalCount = schoolList.length;
-
-            // Update cache with fresh data
             await LocalStorageService.saveToCache('my_schools', schoolList);
-            debugPrint('📊 API schools count: $totalCount');
           }
         } catch (e) {
           debugPrint('❌ Error fetching school count: $e');
-          // Return cached count if API fails
         }
       }
 
-      // 3. Also include pending schools from offline queue
       final pendingSchools = LocalStorageService.getPendingSchools();
       final userPendingCount = pendingSchools.where((school) {
         return school['user_id'] == userId;
       }).length;
 
-      debugPrint('📊 Pending schools count: $userPendingCount');
-
-      // Total = synced schools + pending schools
       return totalCount + userPendingCount;
 
     } catch (e) {
@@ -154,113 +117,38 @@ class SchoolProvider with ChangeNotifier {
     }
   }
 
-  // ─── Get count without making API call (uses cache + pending) ──────
-  int getCachedUserSchoolCount(int userId) {
-    try {
-      // Get from cache
-      final cachedSchools = LocalStorageService.getFromCache('my_schools');
-      int cachedCount = (cachedSchools != null && cachedSchools is List)
-          ? cachedSchools.length
-          : 0;
-
-      // Add pending count
-      final pendingSchools = LocalStorageService.getPendingSchools();
-      final userPendingCount = pendingSchools.where((school) {
-        return school['user_id'] == userId;
-      }).length;
-
-      return cachedCount + userPendingCount;
-
-    } catch (e) {
-      debugPrint('❌ Error in getCachedUserSchoolCount: $e');
-      return 0;
-    }
-  }
-
-  // ─── Refresh my schools cache ───────────────────────────────────────
-  Future<void> refreshMySchools(String token) async {
-    if (token.isEmpty) return;
-
-    final headers = {
-      'Authorization': 'Bearer $token',
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    };
-
-    try {
-      final response = await http.get(
-        Uri.parse('${AppUrl.url}/my-schools'),
-        headers: headers,
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final List<dynamic> schoolList = data['data'] ?? [];
-        await LocalStorageService.saveToCache('my_schools', schoolList);
-        debugPrint('✅ Refreshed my-schools cache with ${schoolList.length} schools');
-      }
-    } catch (e) {
-      debugPrint('❌ Failed to refresh my-schools: $e');
-    }
-  }
-
-  // ─── Fetch user's county from API ──────────────────────────────────────
+  // Fetch user's county
   Future<String?> fetchUserCounty(BuildContext context) async {
     final auth = Provider.of<AuthProvider>(context, listen: false);
     if (!auth.isAuthenticated || auth.token == null) {
-      debugPrint('❌ Cannot fetch county: User not authenticated');
       return null;
     }
 
-    final headers = auth.getAuthHeaders();
     final isOnline = await LocalStorageService.isOnline();
 
     if (!isOnline) {
-      if (_userCounty != null) {
-        debugPrint('📱 Offline: using cached user county: $_userCounty');
-        return _userCounty;
-      }
-      return null;
+      return _userCounty;
     }
 
     try {
+      final headers = auth.getAuthHeaders();
       final response = await http.get(
         Uri.parse('${AppUrl.url}/user/county'),
         headers: headers,
       );
 
-      debugPrint('📥 User county response: ${response.statusCode}');
-
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-
         String? county;
         if (data is String) {
           county = data;
         } else if (data is Map && data.containsKey('county')) {
           county = data['county'] as String?;
-        } else if (data is Map && data.containsKey('data')) {
-          if (data['data'] is Map && data['data'].containsKey('county')) {
-            county = data['data']['county'] as String?;
-          } else if (data['data'] is String) {
-            county = data['data'] as String?;
-          }
         }
 
         if (county != null && county.isNotEmpty) {
-          debugPrint('✅ Fetched user county: $county');
           _userCounty = county;
           await LocalStorageService.saveToCache('user_county', county);
-
-          final matchingCounty = _counties.firstWhere(
-                (c) => c['county']?.toString().toLowerCase() == county?.toLowerCase(),
-            orElse: () => <String, dynamic>{},
-          );
-
-          if (matchingCounty.isNotEmpty) {
-            _selectedCounty = county;
-          }
-
           notifyListeners();
           return county;
         }
@@ -272,94 +160,42 @@ class SchoolProvider with ChangeNotifier {
     return _userCounty;
   }
 
-  // ─── Fetch all dropdowns ─────────────────────────────────────────────
+  // Fetch all dropdowns (now uses DataPreloaderService cache)
   Future<void> fetchDropdownData(BuildContext context) async {
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    final headers = auth.getAuthHeaders();
     final isOnline = await LocalStorageService.isOnline();
 
     if (isOnline) {
+      // Just refresh from API, DataPreloaderService already has the data
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      final headers = auth.getAuthHeaders();
+
       try {
-        // Counties
         final countyRes = await http.get(Uri.parse('${AppUrl.url}/counties'), headers: headers);
         if (countyRes.statusCode == 200) {
           final dynamic decoded = jsonDecode(countyRes.body);
-          if (decoded is List) {
-            _counties = decoded
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          } else if (decoded is Map && decoded['data'] is List) {
-            _counties = (decoded['data'] as List)
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          }
-        } else {
-          debugPrint('Counties fetch failed with status: ${countyRes.statusCode}');
+          _counties = _extractListFromResponse(decoded);
         }
 
-        // All districts
         await fetchAllDistricts(headers);
 
-        // Levels
         final levelRes = await http.get(Uri.parse('${AppUrl.url}/school-levels'), headers: headers);
         if (levelRes.statusCode == 200) {
           final dynamic decoded = jsonDecode(levelRes.body);
-          if (decoded is List) {
-            _levels = decoded
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          } else if (decoded is Map && decoded['data'] is List) {
-            _levels = (decoded['data'] as List)
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          }
-        } else {
-          debugPrint('Levels fetch failed with status: ${levelRes.statusCode}');
+          _levels = _extractListFromResponse(decoded);
         }
 
-        // Types
         final typeRes = await http.get(Uri.parse('${AppUrl.url}/school-types'), headers: headers);
         if (typeRes.statusCode == 200) {
           final dynamic decoded = jsonDecode(typeRes.body);
-          if (decoded is List) {
-            _types = decoded
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          } else if (decoded is Map && decoded['data'] is List) {
-            _types = (decoded['data'] as List)
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          }
-        } else {
-          debugPrint('Types fetch failed with status: ${typeRes.statusCode}');
+          _types = _extractListFromResponse(decoded);
         }
 
-        // Ownerships
         final ownRes = await http.get(Uri.parse('${AppUrl.url}/school-ownerships'), headers: headers);
         if (ownRes.statusCode == 200) {
           final dynamic decoded = jsonDecode(ownRes.body);
-          if (decoded is List) {
-            _ownerships = decoded
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          } else if (decoded is Map && decoded['data'] is List) {
-            _ownerships = (decoded['data'] as List)
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-          }
-        } else {
-          debugPrint('Ownerships fetch failed with status: ${ownRes.statusCode}');
+          _ownerships = _extractListFromResponse(decoded);
         }
 
-        // Cache everything
         await LocalStorageService.cacheDropdowns({
           'counties': _counties,
           'all_districts': _allDistricts,
@@ -379,7 +215,19 @@ class SchoolProvider with ChangeNotifier {
     }
   }
 
-  // ─── Fetch ALL districts ─────────────────────────────────────────────
+  List<Map<String, dynamic>> _extractListFromResponse(dynamic data) {
+    if (data is List) {
+      return data.map((e) => Map<String, dynamic>.from(e)).toList();
+    } else if (data is Map && data.containsKey('data')) {
+      if (data['data'] is List) {
+        return (data['data'] as List)
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+    }
+    return [];
+  }
+
   Future<void> fetchAllDistricts(Map<String, String> headers) async {
     try {
       final res = await http.get(
@@ -389,20 +237,8 @@ class SchoolProvider with ChangeNotifier {
 
       if (res.statusCode == 200) {
         final dynamic decoded = jsonDecode(res.body);
-        if (decoded is List) {
-          _allDistricts = decoded
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        } else if (decoded is Map && decoded['data'] is List) {
-          _allDistricts = (decoded['data'] as List)
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        }
+        _allDistricts = _extractListFromResponse(decoded);
         debugPrint('✅ Loaded ${_allDistricts.length} districts from API');
-      } else {
-        debugPrint('Districts fetch failed with status: ${res.statusCode}');
       }
     } catch (e) {
       debugPrint('Fetch all districts error: $e');
@@ -417,10 +253,8 @@ class SchoolProvider with ChangeNotifier {
       return districtCounty == selectedCounty;
     })
         .toList();
-    debugPrint('✅ Filtered ${_districts.length} districts for county: $county');
   }
 
-  // ─── Fetch districts ─────────────────────────────────────────────────
   Future<void> fetchDistricts(String? county, BuildContext context) async {
     if (county == null || county.isEmpty) {
       _districts = [];
@@ -456,7 +290,7 @@ class SchoolProvider with ChangeNotifier {
     }
   }
 
-  // ─── Create school ───────────────────────────────────────────────────
+  // Create school method remains the same
   Future<Map<String, dynamic>> createSchool(Map<String, dynamic> data, BuildContext context) async {
     _setLoading(true);
     final auth = Provider.of<AuthProvider>(context, listen: false);
@@ -487,9 +321,7 @@ class SchoolProvider with ChangeNotifier {
         if (res.statusCode == 201 || res.statusCode == 200) {
           incrementSessionSchoolCount();
           await _syncPendingSchools(context);
-
-          // Refresh my-schools cache using the token
-          await refreshMySchools(token);
+          await _refreshMySchools(token);
 
           final responseData = jsonDecode(res.body);
           return {
@@ -537,12 +369,34 @@ class SchoolProvider with ChangeNotifier {
     }
   }
 
-  // ─── Sync pending schools ────────────────────────────────────────────
+  Future<void> _refreshMySchools(String token) async {
+    if (token.isEmpty) return;
+
+    final headers = {
+      'Authorization': 'Bearer $token',
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+
+    try {
+      final response = await http.get(
+        Uri.parse('${AppUrl.url}/my-schools'),
+        headers: headers,
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List<dynamic> schoolList = data['data'] ?? [];
+        await LocalStorageService.saveToCache('my_schools', schoolList);
+      }
+    } catch (e) {
+      debugPrint('❌ Failed to refresh my-schools: $e');
+    }
+  }
+
   Future<void> _syncPendingSchools(BuildContext context) async {
     final pending = LocalStorageService.getPendingSchools();
     if (pending.isEmpty) return;
-
-    debugPrint('Syncing ${pending.length} pending schools...');
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final headers = {
@@ -565,10 +419,7 @@ class SchoolProvider with ChangeNotifier {
         );
 
         if (res.statusCode != 201 && res.statusCode != 200) {
-          debugPrint('Sync failed for school: ${res.statusCode}');
           failed.add(school);
-        } else {
-          debugPrint('Successfully synced school: ${school['school_code']}');
         }
       } catch (e) {
         debugPrint('Sync failed for one school: $e');
@@ -580,22 +431,16 @@ class SchoolProvider with ChangeNotifier {
 
     if (failed.isEmpty) {
       await LocalStorageService.clearPendingSchools();
-      debugPrint('All pending schools synced successfully');
-    } else {
-      debugPrint('${failed.length} schools failed to sync');
     }
   }
 
-  // ─── Session school count methods ────────────────────────────────────
   void incrementSessionSchoolCount() {
     _sessionSchoolCount++;
-    debugPrint('Session school count incremented to: $_sessionSchoolCount');
     notifyListeners();
   }
 
   void resetSessionSchoolCount() {
     _sessionSchoolCount = 0;
-    debugPrint('Session school count reset');
   }
 
   int getPendingSchoolsCount() {
@@ -610,134 +455,5 @@ class SchoolProvider with ChangeNotifier {
     final isOnline = await LocalStorageService.isOnline();
     if (!isOnline) return;
     await _syncPendingSchools(context);
-  }
-
-  // ─── Refresh methods ─────────────────────────────────────────────────
-  Future<void> refreshCounties(BuildContext context) async {
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    final headers = auth.getAuthHeaders();
-    final isOnline = await LocalStorageService.isOnline();
-    if (!isOnline) return;
-
-    try {
-      final res = await http.get(Uri.parse('${AppUrl.url}/counties'), headers: headers);
-      if (res.statusCode == 200) {
-        final dynamic decoded = jsonDecode(res.body);
-        if (decoded is List) {
-          _counties = decoded
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        } else if (decoded is Map && decoded['data'] is List) {
-          _counties = (decoded['data'] as List)
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        }
-
-        final cached = LocalStorageService.getCachedDropdowns();
-        cached['counties'] = _counties;
-        await LocalStorageService.cacheDropdowns(cached);
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint('Refresh counties error: $e');
-    }
-  }
-
-  Future<void> refreshLevels(BuildContext context) async {
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    final headers = auth.getAuthHeaders();
-    final isOnline = await LocalStorageService.isOnline();
-    if (!isOnline) return;
-
-    try {
-      final res = await http.get(Uri.parse('${AppUrl.url}/school-levels'), headers: headers);
-      if (res.statusCode == 200) {
-        final dynamic decoded = jsonDecode(res.body);
-        if (decoded is List) {
-          _levels = decoded
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        } else if (decoded is Map && decoded['data'] is List) {
-          _levels = (decoded['data'] as List)
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        }
-
-        final cached = LocalStorageService.getCachedDropdowns();
-        cached['levels'] = _levels;
-        await LocalStorageService.cacheDropdowns(cached);
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint('Refresh levels error: $e');
-    }
-  }
-
-  Future<void> refreshTypes(BuildContext context) async {
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    final headers = auth.getAuthHeaders();
-    final isOnline = await LocalStorageService.isOnline();
-    if (!isOnline) return;
-
-    try {
-      final res = await http.get(Uri.parse('${AppUrl.url}/school-types'), headers: headers);
-      if (res.statusCode == 200) {
-        final dynamic decoded = jsonDecode(res.body);
-        if (decoded is List) {
-          _types = decoded
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        } else if (decoded is Map && decoded['data'] is List) {
-          _types = (decoded['data'] as List)
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        }
-
-        final cached = LocalStorageService.getCachedDropdowns();
-        cached['types'] = _types;
-        await LocalStorageService.cacheDropdowns(cached);
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint('Refresh types error: $e');
-    }
-  }
-
-  Future<void> refreshOwnerships(BuildContext context) async {
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    final headers = auth.getAuthHeaders();
-    final isOnline = await LocalStorageService.isOnline();
-    if (!isOnline) return;
-
-    try {
-      final res = await http.get(Uri.parse('${AppUrl.url}/school-ownerships'), headers: headers);
-      if (res.statusCode == 200) {
-        final dynamic decoded = jsonDecode(res.body);
-        if (decoded is List) {
-          _ownerships = decoded
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        } else if (decoded is Map && decoded['data'] is List) {
-          _ownerships = (decoded['data'] as List)
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        }
-
-        final cached = LocalStorageService.getCachedDropdowns();
-        cached['ownerships'] = _ownerships;
-        await LocalStorageService.cacheDropdowns(cached);
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint('Refresh ownerships error: $e');
-    }
   }
 }

@@ -1,4 +1,3 @@
-// classroom_base.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
@@ -10,6 +9,7 @@ import '../../../../core/constants/app_url.dart';
 import '../../../../core/widgets/custom_app_bar.dart';
 import '../../../../core/widgets/loading_overlay.dart';
 import '../../../../core/services/local_storage_service.dart';
+import '../../../../core/services/data_preloader_service.dart';
 import '../../features/auth/presentation/providers/auth_provider.dart';
 
 abstract class BaseClassroomPage extends StatefulWidget {
@@ -32,16 +32,13 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
   bool _isFetchingDropdowns = false;
   bool _isSubmitting = false;
 
-  // Controllers for this classroom
   late TextEditingController _teacherController;
   late TextEditingController _nbMaleController;
   late TextEditingController _nbFemaleController;
 
-  // Selected values for this classroom
   String? _selectedGrade;
   String? _selectedSubject;
 
-  // Scores for this classroom
   Map<String, int?> _scores = {};
 
   List<Map<String, dynamic>> _grades = [];
@@ -75,51 +72,60 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
     super.dispose();
   }
 
-  // Load from cache
+  // Load from DataPreloaderService cache
+  // Load from DataPreloaderService cache with proper type conversion
   void _loadFromCache() {
-    // Questions
-    final questionsCached = LocalStorageService.getFromCache('classroom_questions');
-    if (questionsCached != null && questionsCached is List) {
-      _questions = questionsCached.asMap().entries.map((entry) {
-        final index = entry.key;
-        final item = entry.value;
-        return {
-          'number': (index + 1).toString(),
-          'id': item['id'].toString(),
-          'name': item['name'].toString(),
-        };
-      }).toList();
+    try {
+      final cachedQuestions = DataPreloaderService.getCachedData('classroom_questions');
 
-      // Re-init scores
+      if (cachedQuestions.isNotEmpty) {
+        _questions = cachedQuestions.map((q) {
+          return {
+            'number': q['number']?.toString() ?? (cachedQuestions.indexOf(q) + 1).toString(),
+            'id': q['id']?.toString() ?? '',  // Ensure ID is String
+            'name': q['name']?.toString() ?? 'Unnamed Question',
+          };
+        }).toList();
+      } else {
+        _questions = [];
+      }
+
       _scores = {};
       for (var q in _questions) {
-        _scores[q['id']!] = null;
+        if (q['id'] != null && q['id']!.isNotEmpty) {
+          _scores[q['id']!] = null;
+        }
       }
-    }
 
-    // Grades
-    final gradesCached = LocalStorageService.getFromCache('classroom_grades');
-    if (gradesCached != null && gradesCached is List) {
-      _grades = gradesCached.map((e) => {
-        'id': e['id']?.toString(),
-        'name': e['name']?.toString() ?? 'Unnamed',
-        'code': e['code']?.toString() ?? e['id']?.toString(),
-      }).toList();
-    }
+      if (schoolLevel != null) {
+        final cachedGrades = DataPreloaderService.getGradesForLevel(schoolLevel!);
+        _grades = cachedGrades.map((g) {
+          return {
+            'id': g['id']?.toString() ?? '',
+            'name': g['name']?.toString() ?? 'Unnamed',
+          };
+        }).toList();
 
-    // Subjects
-    final subjectsCached = LocalStorageService.getFromCache('classroom_subjects');
-    if (subjectsCached != null && subjectsCached is List) {
-      _subjects = subjectsCached.map((s) => {
-        'id': s['id']?.toString(),
-        'name': s['name']?.toString() ?? 'Unnamed',
-      }).toList();
-    }
+        final cachedSubjects = DataPreloaderService.getSubjectsForLevel(schoolLevel!);
+        _subjects = cachedSubjects.map((s) {
+          return {
+            'id': s['id']?.toString() ?? '',
+            'name': s['name']?.toString() ?? 'Unnamed',
+          };
+        }).toList();
+      }
 
-    if (mounted) setState(() {});
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('❌ Error loading from cache: $e');
+      _questions = [];
+      _grades = [];
+      _subjects = [];
+      if (mounted) setState(() {});
+    }
   }
 
-  // Refresh data if online
+  // Refresh data if online (background)
   Future<void> _refreshDataIfOnline() async {
     final isOnline = await LocalStorageService.isOnline();
     if (!isOnline) return;
@@ -148,7 +154,6 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
               };
             }).toList();
 
-            // Update scores
             final newScores = <String, int?>{};
             for (var q in _questions) {
               newScores[q['id']!] = _scores.containsKey(q['id']) ? _scores[q['id']!] : null;
@@ -163,10 +168,9 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
       print('Background refresh classroom questions failed: $e');
     }
 
-    // Refresh grades & subjects
+    // Refresh grades & subjects if level is known
     if (schoolLevel != null) {
       try {
-        // Grades
         final gradeRes = await http.get(
           Uri.parse('${AppUrl.url}/level/grades?level=$schoolLevel'),
           headers: headers,
@@ -179,15 +183,12 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
               _grades = gradeList.map((e) => {
                 'id': e['id']?.toString(),
                 'name': e['name']?.toString() ?? 'Unnamed',
-                'code': e['code']?.toString() ?? e['id']?.toString(),
               }).toList();
             });
-
-            await LocalStorageService.saveToCache('classroom_grades', gradeList);
+            await LocalStorageService.saveToCache('grades_${schoolLevel!.toLowerCase()}', gradeList);
           }
         }
 
-        // Subjects
         final subjectRes = await http.get(
           Uri.parse('${AppUrl.url}/level/subjects?level=$schoolLevel'),
           headers: headers,
@@ -202,8 +203,7 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
                 'name': s['name']?.toString() ?? 'Unnamed',
               }).toList();
             });
-
-            await LocalStorageService.saveToCache('classroom_subjects', subjectList);
+            await LocalStorageService.saveToCache('subjects_${schoolLevel!.toLowerCase()}', subjectList);
           }
         }
       } catch (e) {
@@ -215,63 +215,33 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
   // Validate current classroom
   bool _validateCurrentClassroom() {
     if (_teacherController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Teacher name is required for Classroom $classroomNumber'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      _showSnackBar('Teacher name is required for Classroom $classroomNumber');
       return false;
     }
 
     if (_selectedGrade == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Grade is required for Classroom $classroomNumber'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      _showSnackBar('Grade is required for Classroom $classroomNumber');
       return false;
     }
 
     if (_selectedSubject == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Subject is required for Classroom $classroomNumber'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      _showSnackBar('Subject is required for Classroom $classroomNumber');
       return false;
     }
 
     if (_nbMaleController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Number of male students is required for Classroom $classroomNumber'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      _showSnackBar('Number of male students is required for Classroom $classroomNumber');
       return false;
     }
 
     if (_nbFemaleController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Number of female students is required for Classroom $classroomNumber'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      _showSnackBar('Number of female students is required for Classroom $classroomNumber');
       return false;
     }
 
     for (var q in _questions) {
       if (_scores[q['id']!] == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Please answer all questions for Classroom $classroomNumber'),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        _showSnackBar('Please answer all questions for Classroom $classroomNumber');
         return false;
       }
     }
@@ -279,7 +249,16 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
     return true;
   }
 
-  // Build payload for this classroom
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
+
+  // Build payload
   Map<String, dynamic> _buildPayload() {
     final cleanScores = _scores.map((key, value) => MapEntry(key, value ?? 0));
 
@@ -318,9 +297,6 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
     final isOnline = await LocalStorageService.isOnline();
     final payload = _buildPayload();
 
-    print('Classroom $classroomNumber payload:');
-    print(jsonEncode(payload));
-
     try {
       if (isOnline) {
         final res = await http.post(
@@ -333,25 +309,39 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
           await _syncPendingClassroom();
           _handleSuccess();
         } else {
-          await LocalStorageService.savePendingClassroomObservation(payload);
+          // FIX: Save with queuedAt timestamp
+          final pendingPayload = {
+            ...payload,
+            'queuedAt': DateTime.now().toIso8601String(),
+          };
+          await LocalStorageService.savePendingClassroomObservation(pendingPayload);
           _handleOfflineSave();
         }
       } else {
-        await LocalStorageService.savePendingClassroomObservation(payload);
+        // FIX: Save with queuedAt timestamp when offline
+        final pendingPayload = {
+          ...payload,
+          'queuedAt': DateTime.now().toIso8601String(),
+        };
+        await LocalStorageService.savePendingClassroomObservation(pendingPayload);
         _handleOfflineSave();
       }
     } catch (e) {
-      print('Submit error: $e');
       try {
-        await LocalStorageService.savePendingClassroomObservation(payload);
+        // FIX: Save with queuedAt timestamp on error
+        final pendingPayload = {
+          ...payload,
+          'queuedAt': DateTime.now().toIso8601String(),
+        };
+        await LocalStorageService.savePendingClassroomObservation(pendingPayload);
         _handleOfflineSave();
       } catch (hiveErr) {
-        print('Hive failed: $hiveErr');
         _handleError('Error saving data');
       }
     }
   }
 
+  // FIXED: Sync pending classroom observations
   Future<void> _syncPendingClassroom() async {
     final pending = LocalStorageService.getPendingClassroomObservation();
     if (pending.isEmpty) return;
@@ -363,17 +353,39 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
 
     for (var payload in pending) {
       try {
+        // Create a clean payload for API (remove metadata)
+        final apiPayload = Map<String, dynamic>.from(payload);
+        apiPayload.remove('queuedAt');
+
+        // Ensure scores are integers
+        if (apiPayload['scores'] is Map) {
+          final scoresMap = <String, int>{};
+          (apiPayload['scores'] as Map).forEach((key, value) {
+            if (value is int) {
+              scoresMap[key.toString()] = value;
+            } else if (value is String) {
+              scoresMap[key.toString()] = int.tryParse(value) ?? 0;
+            } else {
+              scoresMap[key.toString()] = 0;
+            }
+          });
+          apiPayload['scores'] = scoresMap;
+        }
+
         final res = await http.post(
           Uri.parse('${AppUrl.url}/classroom-observation'),
           headers: headers,
-          body: jsonEncode(payload),
+          body: jsonEncode(apiPayload),
         );
 
         if (res.statusCode == 200 || res.statusCode == 201) {
           await LocalStorageService.removePendingClassroomObservation(payload);
+          debugPrint('✅ Synced classroom ${payload['class_num']}');
+        } else {
+          debugPrint('❌ Sync failed: ${res.statusCode}');
         }
       } catch (e) {
-        debugPrint('Pending classroom sync failed: $e');
+        debugPrint('❌ Pending classroom sync error: $e');
       }
     }
   }
@@ -394,15 +406,12 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
       ),
     );
 
-    // Navigate to next classroom or completion page
     Future.delayed(const Duration(seconds: 1), () {
       if (!mounted) return;
 
       if (classroomNumber < 3) {
-        // Navigate to next classroom
         _navigateToNextClassroom();
       } else {
-        // All classrooms done, go to next module
         context.push(
           '/parents',
           extra: {
@@ -431,7 +440,6 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
       ),
     );
 
-    // Navigate to next classroom even when offline
     Future.delayed(const Duration(seconds: 1), () {
       if (!mounted) return;
 
@@ -713,9 +721,7 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
             Row(
               children: [
                 Expanded(
-                  child: _isFetchingDropdowns
-                      ? const Center(child: CircularProgressIndicator())
-                      : _grades.isEmpty
+                  child: _grades.isEmpty
                       ? const Text('No grades available', style: TextStyle(color: Colors.grey))
                       : DropdownButtonFormField<String>(
                     value: _selectedGrade,
@@ -737,9 +743,7 @@ abstract class BaseClassroomPageState<T extends BaseClassroomPage> extends State
                 ),
                 const SizedBox(width: 16),
                 Expanded(
-                  child: _isFetchingDropdowns
-                      ? const SizedBox.shrink()
-                      : _subjects.isEmpty
+                  child: _subjects.isEmpty
                       ? const Text('No subjects available', style: TextStyle(color: Colors.grey))
                       : DropdownButtonFormField<String>(
                     value: _selectedSubject,

@@ -12,7 +12,7 @@ class SampleDashboardPage extends StatelessWidget {
   // Sample school data passed to every page
   static const Map<String, dynamic> sampleSchoolData = {
     'schoolName': 'St Francis High School',
-    'schoolCode': 'MOE-188-003',
+    'schoolCode': 'MOE-188-011',
     'level': 'ECE',
   };
 
@@ -34,34 +34,34 @@ class SampleDashboardPage extends StatelessWidget {
         color: isDark ? Colors.grey[900] : Colors.grey[100],
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(20.0),
+            padding: const EdgeInsets.all(16.0), // Reduced from 20 to 16
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Quick Navigation',
                   style: TextStyle(
-                    fontSize: 28,
+                    fontSize: 24, // Reduced from 28
                     fontWeight: FontWeight.bold,
                     color: isDark ? Colors.white : Colors.black87,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 Text(
-                  'Access all main sections of the application',
+                  'Access all main sections',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 14, // Reduced from 16
                     color: isDark ? Colors.white70 : Colors.grey[700],
                   ),
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 24), // Reduced from 32
 
                 Expanded(
                   child: GridView.count(
                     crossAxisCount: 2,
-                    mainAxisSpacing: 20,
-                    crossAxisSpacing: 20,
-                    childAspectRatio: 1.35,
+                    mainAxisSpacing: 16, // Reduced from 20
+                    crossAxisSpacing: 16, // Reduced from 20
+                    childAspectRatio: 1.2, // Adjusted for better fit
                     children: [
                       // Core Actions
                       _buildCard(
@@ -71,50 +71,6 @@ class SampleDashboardPage extends StatelessWidget {
                         color: Colors.blue,
                         route: '/schools',
                       ),
-                      // _buildCard(
-                      //   context: context,
-                      //   icon: Icons.assessment,
-                      //   title: 'Start Assessment',
-                      //   color: Colors.green,
-                      //   route: '/assessment-2',
-                      // ),
-                      //
-                      // // Assessment Modules
-                      // _buildCard(
-                      //   context: context,
-                      //   icon: Icons.description,
-                      //   title: 'Document Check',
-                      //   color: Colors.deepPurple,
-                      //   route: '/document-check',
-                      // ),
-                      // _buildCard(
-                      //   context: context,
-                      //   icon: Icons.group,
-                      //   title: 'Leadership Assessment',
-                      //   color: Colors.indigo,
-                      //   route: '/leadership',
-                      // ),
-                      // _buildCard(
-                      //   context: context,
-                      //   icon: Icons.domain,
-                      //   title: 'Infrastructure Assessment',
-                      //   color: Colors.teal,
-                      //   route: '/infrastructure',
-                      // ),
-                      // _buildCard(
-                      //   context: context,
-                      //   icon: Icons.ac_unit_rounded,
-                      //   title: 'Classroom Observation',
-                      //   color: Colors.purple,
-                      //   route: '/classroom',
-                      // ),
-                      // _buildCard(
-                      //   context: context,
-                      //   icon: Icons.ac_unit_rounded,
-                      //   title: 'Student Participation',
-                      //   color: Colors.purple,
-                      //   route: '/students',
-                      // ),
 
                       // Offline Sections
                       _buildCard(
@@ -154,29 +110,29 @@ class SampleDashboardPage extends StatelessWidget {
                       ),
                       _buildCard(
                         context: context,
-                        icon: Icons.abc_outlined,
-                        title: 'Offline Classroom Obs.',
+                        icon: Icons.school,
+                        title: 'Offline Classroom',
                         color: Colors.purple,
                         route: '/offline-classroom-observation',
                       ),
                       _buildCard(
                         context: context,
-                        icon: Icons.verified_user_sharp,
-                        title: 'Offline Parents Participation',
+                        icon: Icons.family_restroom,
+                        title: 'Offline Parents',
                         color: Colors.purple,
                         route: '/offline-parent-participation',
                       ),
                       _buildCard(
                         context: context,
-                        icon: Icons.verified_user_sharp,
-                        title: 'Offline Students Participation',
+                        icon: Icons.people,
+                        title: 'Offline Students',
                         color: Colors.purple,
                         route: '/offline-student-participation',
                       ),
                       _buildCard(
                         context: context,
-                        icon: Icons.verified_user_sharp,
-                        title: 'Offline Textbooks & Teaching Materials',
+                        icon: Icons.menu_book,
+                        title: 'Offline Textbooks',
                         color: Colors.purple,
                         route: '/offline-textbooks-teaching',
                       ),
@@ -184,7 +140,7 @@ class SampleDashboardPage extends StatelessWidget {
                   ),
                 ),
 
-                const SizedBox(height: 24),
+                const SizedBox(height: 16), // Reduced from 24
 
                 // Footer
                 Center(
@@ -192,7 +148,7 @@ class SampleDashboardPage extends StatelessWidget {
                     'Version 1.0.0 • © 2026 MOE Liberia',
                     style: TextStyle(
                       color: isDark ? Colors.white60 : Colors.grey[600],
-                      fontSize: 13,
+                      fontSize: 12, // Reduced from 13
                     ),
                   ),
                 ),
@@ -219,7 +175,7 @@ class SampleDashboardPage extends StatelessWidget {
           route,
           extra: {
             'schoolName': 'St Francis High School',
-            'schoolCode': 'MOE-188-003',
+            'schoolCode': 'MOE-188-011',
             'level': 'ECE',
           },
         );
@@ -229,23 +185,27 @@ class SampleDashboardPage extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         color: isDark ? Colors.grey[850] : Colors.white,
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12), // Reduced from 16
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
                 icon,
-                size: 48,
+                size: 40, // Reduced from 48
                 color: color,
               ),
-              const SizedBox(height: 16),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.white : Colors.black87,
+              const SizedBox(height: 12), // Reduced from 16
+              Flexible(
+                child: Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  maxLines: 2, // Allow wrapping
+                  overflow: TextOverflow.ellipsis, // Add ellipsis if too long
+                  style: TextStyle(
+                    fontSize: 13, // Reduced from 15
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
                 ),
               ),
             ],

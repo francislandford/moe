@@ -127,7 +127,7 @@ class _AboutPageState extends State<AboutPage> with SingleTickerProviderStateMix
                     _buildSectionTitle(context, 'Our Mission'),
                     const SizedBox(height: 12),
                     Text(
-                      'The School Quality Assessment App is designed to support the Ministry of Education in monitoring and improving school performance across Liberia. By enabling real-time data collection during school visits, the app helps identify gaps, track progress, and ensure accountability at every level.',
+                      'The School Mapping, Quality Assessment and Performance App is designed to support the Ministry of Education in monitoring and improving school performance across Liberia. By enabling real-time data collection during school visits, the app helps identify gaps, track progress, and ensure accountability at every level.',
                       style: TextStyle(
                         fontSize: 16,
                         height: 1.6,

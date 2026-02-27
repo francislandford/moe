@@ -184,81 +184,11 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // ─── 1.1 Absent Teachers ───────────────────────────────
-                        Consumer<AssessmentProvider>(
-                          builder: (context, prov, child) {
-                            return _sectionCard(
-                              title: '1.1 Staff Absent on Day of Assessment at ${prov.schoolName}',
-                              children: [
-                                if (prov.absentRecords.isEmpty)
-                                  const Padding(
-                                    padding: EdgeInsets.all(16),
-                                    child: Center(
-                                      child: Text(
-                                        'No absent teachers recorded. Tap the button below to add.',
-                                        style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ),
-                                  )
-                                else
-                                  ...prov.absentRecords.asMap().entries.map((e) {
-                                    return _absentRow(context, e.key, e.value, prov);
-                                  }).toList(),
-                                const SizedBox(height: 16),
-                                OutlinedButton.icon(
-                                  icon: const Icon(Icons.add),
-                                  label: const Text('Add Absent Teacher'),
-                                  onPressed: () {
-                                    prov.addAbsent();
-                                  },
-                                ),
-                              ],
-                            );
-                          },
-                        ),
+                        _buildAbsentTeachersSection(provider),
                         const SizedBox(height: 32),
 
                         // ─── 1.2 Total Staff with Position Dropdown ─────────────
-                        Consumer<AssessmentProvider>(
-                          builder: (context, prov, child) {
-                            return _sectionCard(
-                              title: '1.2 Total staff (including all administrative staff), teaching load and qualification',
-                              children: [
-                                if (prov.isLoadingPositions)
-                                  const Padding(
-                                    padding: EdgeInsets.only(bottom: 16),
-                                    child: Text(
-                                      'Loading positions...',
-                                      style: TextStyle(color: Colors.grey, fontSize: 12),
-                                    ),
-                                  ),
-                                if (prov.staffRecords.isEmpty)
-                                  const Padding(
-                                    padding: EdgeInsets.all(16),
-                                    child: Center(
-                                      child: Text(
-                                        'No staff records. Tap the button below to add.',
-                                        style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ),
-                                  )
-                                else
-                                  ...prov.staffRecords.asMap().entries.map((e) {
-                                    return _staffRowWithPosition(context, e.key, e.value, prov);
-                                  }).toList(),
-                                const SizedBox(height: 16),
-                                OutlinedButton.icon(
-                                  icon: const Icon(Icons.add),
-                                  label: const Text('Add Staff Member'),
-                                  onPressed: () {
-                                    prov.addStaff();
-                                  },
-                                ),
-                              ],
-                            );
-                          },
-                        ),
+                        _buildTotalStaffSection(provider),
                         const SizedBox(height: 32),
 
                         // ─── 1.3 Required Teachers ─────────────────────────────
@@ -295,7 +225,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                                   child: TextFormField(
                                     initialValue: provider.reqAssTeacher,
                                     decoration: const InputDecoration(
-                                      labelText: 'Assigned Teachers',
+                                      labelText: 'Assisigned Teachers',
                                       border: OutlineInputBorder(),
                                     ),
                                     keyboardType: TextInputType.number,
@@ -335,7 +265,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                                   child: TextFormField(
                                     initialValue: provider.reqNumRequired,
                                     decoration: InputDecoration(
-                                      labelText: 'Teachers Required: ${provider.reqNumRequired}',
+                                      labelText: 'Teachers Required',
                                       border: const OutlineInputBorder(),
                                       filled: true,
                                       fillColor: Colors.grey[100],
@@ -563,7 +493,128 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Staff Row with Position Dropdown
+  // Absent Teachers Section - FIXED
+  // ────────────────────────────────────────────────
+  Widget _buildAbsentTeachersSection(AssessmentProvider provider) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '1.1 Staff Absent on Day of Assessment at ${provider.schoolName}',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary,
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Dynamic list of absent records
+            ...List.generate(provider.absentRecords.length, (index) {
+              return _absentRow(context, index, provider.absentRecords[index], provider);
+            }),
+
+            if (provider.absentRecords.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(
+                  child: Text(
+                    'No absent teachers recorded. Tap the button below to add.',
+                    style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: 16),
+
+            // Add button with key to ensure it's rebuildable
+            OutlinedButton.icon(
+              key: const ValueKey('add_absent_button'),
+              icon: const Icon(Icons.add),
+              label: const Text('Add Absent Teacher'),
+              onPressed: () {
+                provider.addAbsent();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────
+  // Total Staff Section - FIXED
+  // ────────────────────────────────────────────────
+  Widget _buildTotalStaffSection(AssessmentProvider provider) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '1.2 Total staff (including all administrative staff), teaching load and qualification',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary,
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            if (provider.isLoadingPositions)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 16),
+                child: Text(
+                  'Loading positions...',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ),
+
+            // Dynamic list of staff records
+            ...List.generate(provider.staffRecords.length, (index) {
+              return _staffRowWithPosition(context, index, provider.staffRecords[index], provider);
+            }),
+
+            if (provider.staffRecords.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(
+                  child: Text(
+                    'No staff records. Tap the button below to add.',
+                    style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: 16),
+
+            // Add button with key to ensure it's rebuildable
+            OutlinedButton.icon(
+              key: const ValueKey('add_staff_button'),
+              icon: const Icon(Icons.add),
+              label: const Text('Add Staff Member'),
+              onPressed: () {
+                provider.addStaff();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────
+  // Staff Row with Position Dropdown - FIXED
   // ────────────────────────────────────────────────
   Widget _staffRowWithPosition(
       BuildContext context,
@@ -572,6 +623,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
       AssessmentProvider provider,
       ) {
     return Card(
+      key: ValueKey('staff_row_$index'),
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -734,7 +786,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Absent Row
+  // Absent Row - FIXED
   // ────────────────────────────────────────────────
   Widget _absentRow(
       BuildContext context,
@@ -743,6 +795,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
       AssessmentProvider provider,
       ) {
     return Card(
+      key: ValueKey('absent_row_$index'),
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -834,15 +887,24 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   // ────────────────────────────────────────────────
   // Verify Student Table Row with validation
   // ────────────────────────────────────────────────
+  // ────────────────────────────────────────────────
+// Verify Student Table Row with validation - FIXED
+// ────────────────────────────────────────────────
   Widget _verifyStudentTableRow(
       BuildContext context,
       String gradeName,
       AssessmentProvider provider,
       ) {
+    // Ensure record exists
+    if (gradeName.isEmpty || gradeName == 'Unknown') {
+      return const SizedBox.shrink();
+    }
+
     provider.ensureVerifyStudentRecord(gradeName);
     final record = provider.getVerifyStudentRecord(gradeName);
 
     return Container(
+      key: ValueKey('verify_row_$gradeName'),
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
       decoration: BoxDecoration(
@@ -858,6 +920,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
               child: Text(
                 gradeName,
                 style: const TextStyle(fontWeight: FontWeight.w500),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ),
@@ -970,6 +1033,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
 
     if (record == null) {
       return Container(
+        key: ValueKey('fee_loading_$feeName'),
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -983,6 +1047,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
     }
 
     return Container(
+      key: ValueKey('fee_row_$feeName'),
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
       decoration: BoxDecoration(
