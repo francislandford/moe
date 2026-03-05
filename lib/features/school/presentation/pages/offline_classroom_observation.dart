@@ -1,5 +1,4 @@
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive/hive.dart';
@@ -43,12 +42,9 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
       );
       return;
     }
-
     setState(() => _isSyncing = true);
-
     int successCount = 0;
     final copy = List<Map<String, dynamic>>.from(_pendingObservations);
-
     for (var item in copy) {
       try {
         final success = await _syncSingle(item);
@@ -60,33 +56,45 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
         debugPrint('Sync failed: $e');
       }
     }
-
     await _loadPending();
     setState(() => _isSyncing = false);
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(successCount > 0
-            ? '$successCount classroom observation(s) synced!'
-            : 'No observations synced.'),
+        content: Text(successCount > 0 ? '$successCount classroom observation(s) synced!' : 'No observations synced.'),
         backgroundColor: successCount > 0 ? Colors.green : Colors.orange,
       ),
     );
   }
 
+  Future<void> _syncSingleFromCard(Map<String, dynamic> payload) async {
+    if (!await LocalStorageService.isOnline()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No internet connection. Connect and try again.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    setState(() => _isSyncing = true);
+    final success = await _syncSingle(payload);
+    if (success) {
+      await _removeFromPending(payload);
+      await _loadPending();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Synced successfully'), backgroundColor: Colors.green));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sync failed'), backgroundColor: Colors.orange));
+    }
+    setState(() => _isSyncing = false);
+  }
+
   Future<bool> _syncSingle(Map<String, dynamic> payload) async {
     final auth = Provider.of<AuthProvider>(context, listen: false);
     if (!auth.isAuthenticated || auth.token == null) return false;
-
     final headers = auth.getAuthHeaders();
-
     try {
       final res = await http.post(
         Uri.parse('${AppUrl.url}/classroom-observation'),
         headers: headers,
         body: jsonEncode(payload),
       );
-
       return (res.statusCode == 200 || res.statusCode == 201);
     } catch (e) {
       debugPrint('Classroom sync error: $e');
@@ -111,19 +119,13 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
         content: const Text('Are you sure? This unsynced data will be permanently removed.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete', style: TextStyle(color: Colors.red))),
         ],
       ),
     );
-
     if (confirm == true) {
       await _removeFromPending(item);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pending observation deleted'), backgroundColor: Colors.red),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pending observation deleted'), backgroundColor: Colors.red));
     }
   }
 
@@ -138,6 +140,30 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
           onPressed: () => context.pop(),
         ),
         actions: [
+          StreamBuilder<bool>(
+            stream: LocalStorageService.onlineStatusStream,
+            initialData: LocalStorageService.currentOnlineStatus,
+            builder: (context, snapshot) {
+              final bool isOnline = snapshot.data ?? true;
+              return Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: isOnline ? Colors.green : Colors.orange,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white, width: 1),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(isOnline ? Icons.wifi : Icons.wifi_off, color: Colors.white, size: 16),
+                    const SizedBox(width: 4),
+                    Text(isOnline ? 'Online' : 'Offline', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
             tooltip: 'Refresh',
@@ -147,10 +173,9 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
       ),
       body: StreamBuilder<bool>(
         stream: LocalStorageService.onlineStatusStream,
-        initialData: true,
+        initialData: LocalStorageService.currentOnlineStatus,
         builder: (context, snapshot) {
           final bool isOnline = snapshot.data ?? true;
-
           return Column(
             children: [
               if (!isOnline)
@@ -159,12 +184,11 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
                   color: Colors.orange.shade100,
                   padding: const EdgeInsets.all(12),
                   child: const Text(
-                    'Offline Mode — Sync disabled until connected',
+                    'You are offline. Sync buttons are disabled until connected.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.w600),
                   ),
                 ),
-
               Expanded(
                 child: _pendingObservations.isEmpty
                     ? Center(
@@ -189,11 +213,9 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
                       final date = item['queuedAt'] != null
                           ? DateFormat('dd MMM yyyy, HH:mm').format(DateTime.parse(item['queuedAt']))
                           : 'Unknown date';
-
                       final scoreCount = (item['scores'] as Map?)?.length ?? 0;
                       final classNum = item['class_num'] ?? '?';
                       final teacher = item['teacher'] ?? 'Unknown Teacher';
-
                       return Card(
                         margin: const EdgeInsets.only(bottom: 16),
                         elevation: 3,
@@ -205,10 +227,7 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
                             backgroundColor: AppColors.primary.withOpacity(0.15),
                             child: Icon(Icons.school_rounded, color: AppColors.primary, size: 32),
                           ),
-                          title: Text(
-                            'Classroom $classNum - $teacher',
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
-                          ),
+                          title: Text('Classroom $classNum - $teacher', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
                           subtitle: Padding(
                             padding: const EdgeInsets.only(top: 6),
                             child: Column(
@@ -217,10 +236,7 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
                                 Text('School Code: ${item['school'] ?? 'N/A'}', style: const TextStyle(fontSize: 14)),
                                 Text('Queued: $date', style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
                                 const SizedBox(height: 4),
-                                Text(
-                                  'Data: $scoreCount questions answered',
-                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
-                                ),
+                                Text('Data: $scoreCount questions answered', style: const TextStyle(fontSize: 13, color: Colors.grey)),
                               ],
                             ),
                           ),
@@ -230,29 +246,12 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
                               IconButton(
                                 icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
                                 tooltip: 'Delete pending',
-                                onPressed: () => _deletePending(index),
+                                onPressed: _isSyncing ? null : () => _deletePending(index),
                               ),
                               IconButton(
-                                icon: const Icon(Icons.sync_rounded, color: AppColors.primary),
+                                icon: Icon(Icons.sync_rounded, color: isOnline ? AppColors.primary : Colors.grey),
                                 tooltip: isOnline ? 'Sync now' : 'Offline - connect to sync',
-                                onPressed: isOnline
-                                    ? () async {
-                                  setState(() => _isSyncing = true);
-                                  final success = await _syncSingle(item);
-                                  if (success) {
-                                    await _removeFromPending(item);
-                                    await _loadPending();
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Synced successfully'), backgroundColor: Colors.green),
-                                    );
-                                  } else {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Sync failed'), backgroundColor: Colors.orange),
-                                    );
-                                  }
-                                  setState(() => _isSyncing = false);
-                                }
-                                    : null,
+                                onPressed: (isOnline && !_isSyncing) ? () => _syncSingleFromCard(item) : null,
                               ),
                             ],
                           ),
@@ -269,21 +268,17 @@ class _OfflineClassroomObservationPageState extends State<OfflineClassroomObserv
       floatingActionButton: _pendingObservations.isNotEmpty
           ? StreamBuilder<bool>(
         stream: LocalStorageService.onlineStatusStream,
-        initialData: true,
+        initialData: LocalStorageService.currentOnlineStatus,
         builder: (context, snapshot) {
-          final bool canSync = snapshot.data ?? false;
-
+          final bool isOnline = snapshot.data ?? true;
           return FloatingActionButton.extended(
             heroTag: 'sync_all_classroom',
-            onPressed: canSync && !_isSyncing ? _syncAll : null,
-            backgroundColor: canSync ? AppColors.primary : Colors.grey,
+            onPressed: (isOnline && !_isSyncing) ? _syncAll : null,
+            backgroundColor: isOnline ? AppColors.primary : Colors.grey,
             icon: _isSyncing
                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
                 : const Icon(Icons.sync_rounded, color: Colors.white),
-            label: Text(
-              _isSyncing ? 'Syncing...' : 'Sync All (${_pendingObservations.length})',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-            ),
+            label: Text(_isSyncing ? 'Syncing...' : 'Sync All (${_pendingObservations.length})', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
           );
         },
       )

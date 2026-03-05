@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:moe/features/school/presentation/pages/my_schools_page.dart';
 import 'package:provider/provider.dart';
 
 import '../core/constants/app_colors.dart';
+
+// Auth Pages
 import '../features/auth/presentation/pages/login.dart';
+import '../features/auth/presentation/pages/reset_password_code_page.dart';
+import '../features/auth/presentation/pages/reset_password_email_page.dart';
+import '../features/auth/presentation/pages/reset_password_new_page.dart';
 import '../features/auth/presentation/providers/auth_provider.dart';
-import '../features/home.dart';
+
+// Onboarding
 import '../features/onboarding/presentation/pages/onboarding_page.dart';
+
+// School Pages
+import '../features/school/presentation/pages/my_schools_page.dart';
 import '../features/school/presentation/pages/Profile.dart';
 import '../features/school/presentation/pages/about.dart';
 import '../features/school/presentation/pages/add_school_page.dart';
@@ -40,8 +48,13 @@ import '../features/school/presentation/pages/textbooks_teaching_page.dart';
 // ────────────────────────────────────────────────
 class AuthenticatedLayout extends StatefulWidget {
   final Widget child;
+  final String location;
 
-  const AuthenticatedLayout({super.key, required this.child});
+  const AuthenticatedLayout({
+    super.key,
+    required this.child,
+    required this.location,
+  });
 
   @override
   State<AuthenticatedLayout> createState() => _AuthenticatedLayoutState();
@@ -50,21 +63,54 @@ class AuthenticatedLayout extends StatefulWidget {
 class _AuthenticatedLayoutState extends State<AuthenticatedLayout> {
   int _selectedIndex = 0;
 
-  static const List<String> _navRoutes = [
-    '/home',
-    '/about',
-    '/profile',
-    '/settings',
-  ];
+  // Map routes to their corresponding navigation indices (accounting for FAB placeholder)
+  final Map<String, int> _routeToIndex = {
+    '/home': 0,
+    '/about': 1,
+    '/profile': 3,  // Index 3 because index 2 is FAB placeholder
+    '/settings': 4,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _updateSelectedIndex();
+  }
+
+  @override
+  void didUpdateWidget(AuthenticatedLayout oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.location != oldWidget.location) {
+      _updateSelectedIndex();
+    }
+  }
+
+  void _updateSelectedIndex() {
+    final newIndex = _routeToIndex[widget.location] ?? 0;
+    if (_selectedIndex != newIndex) {
+      setState(() {
+        _selectedIndex = newIndex;
+      });
+    }
+  }
 
   void _onTap(int index) {
     if (index == 2) return; // Skip FAB placeholder
 
-    final routeIndex = index < 2 ? index : index - 1;
-
-    if (routeIndex != _selectedIndex) {
-      setState(() => _selectedIndex = routeIndex);
-      context.go(_navRoutes[routeIndex]);
+    // Map navigation indices back to routes
+    switch (index) {
+      case 0:
+        context.go('/home');
+        break;
+      case 1:
+        context.go('/about');
+        break;
+      case 3:
+        context.go('/profile');
+        break;
+      case 4:
+        context.go('/settings');
+        break;
     }
   }
 
@@ -150,53 +196,131 @@ GoRouter createRouter(AuthProvider authProvider) {
     initialLocation: authProvider.isAuthenticated ? '/home' : '/login',
     redirect: (context, state) {
       final isLoggedIn = authProvider.isAuthenticated;
-      final isGoingToPublic = state.matchedLocation.startsWith('/login') ||
-          state.matchedLocation == '/splash' ||
-          state.matchedLocation == '/onboarding';
+
+      // List of public routes that don't require authentication
+      final publicRoutes = [
+        '/login',
+        '/splash',
+        '/onboarding',
+        '/forgot-password',
+        '/reset-password-code',
+        '/reset-password-new',
+      ];
+
+      // Check if current route is a password reset route
+      final isPasswordResetRoute = state.matchedLocation.startsWith('/forgot-password') ||
+          state.matchedLocation.startsWith('/reset-password-code') ||
+          state.matchedLocation.startsWith('/reset-password-new');
+
+      final isGoingToPublic = publicRoutes.any(
+            (route) => state.matchedLocation.startsWith(route),
+      );
+
+      // Allow authenticated users to access password reset routes
+      if (isLoggedIn && isPasswordResetRoute) {
+        return null; // Don't redirect, let them access the page
+      }
 
       if (!isLoggedIn && !isGoingToPublic) {
         return '/login';
       }
+
+      // Redirect authenticated users away from other public routes
       if (isLoggedIn && isGoingToPublic) {
         return '/home';
       }
+
       return null;
     },
     routes: [
       // ─── Public / Unauthenticated Routes ───
       GoRoute(
         path: '/login',
+        name: 'login',
         builder: (context, state) => const LoginPage(),
       ),
       GoRoute(
         path: '/splash',
+        name: 'splash',
         builder: (context, state) => const OnboardingPage(),
+      ),
+
+      // Password Reset Routes
+      GoRoute(
+        path: '/forgot-password',
+        name: 'forgot-password',
+        builder: (context, state) => const ForgotPasswordEmailPage(),
+      ),
+      GoRoute(
+        path: '/reset-password-code',
+        name: 'reset-password-code',
+        builder: (context, state) {
+          final extra = state.extra as Map<String, dynamic>?;
+          return ResetPasswordCodePage(
+            email: extra?['email'] as String?,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/reset-password-new',
+        name: 'reset-password-new',
+        builder: (context, state) {
+          final extra = state.extra as Map<String, dynamic>?;
+          return ResetPasswordNewPage(
+            email: extra?['email'] as String?,
+            code: extra?['code'] as String?,
+          );
+        },
       ),
 
       // ─── Authenticated Routes (with bottom nav) ───
       ShellRoute(
-        builder: (context, state, child) => AuthenticatedLayout(child: child),
+        navigatorKey: GlobalKey<NavigatorState>(),
+        builder: (context, state, child) {
+          return AuthenticatedLayout(
+            child: child,
+            location: state.matchedLocation,
+          );
+        },
         routes: [
+          // Main Navigation Routes
           GoRoute(
             path: '/home',
-            builder: (context, state) => const MySchoolsPage(),
+            name: 'home',
+            pageBuilder: (context, state) => NoTransitionPage(
+              key: state.pageKey,
+              child: const MySchoolsPage(),
+            ),
           ),
           GoRoute(
             path: '/about',
-            builder: (context, state) => const AboutPage(),
+            name: 'about',
+            pageBuilder: (context, state) => NoTransitionPage(
+              key: state.pageKey,
+              child: const AboutPage(),
+            ),
           ),
           GoRoute(
             path: '/profile',
-            builder: (context, state) => const ProfilePage(),
+            name: 'profile',
+            pageBuilder: (context, state) => NoTransitionPage(
+              key: state.pageKey,
+              child: const ProfilePage(),
+            ),
           ),
           GoRoute(
             path: '/settings',
-            builder: (context, state) => const SettingsPage(),
+            name: 'settings',
+            pageBuilder: (context, state) => NoTransitionPage(
+              key: state.pageKey,
+              child: const SettingsPage(),
+            ),
           ),
 
-          // ─── Full-screen modal routes (using pageBuilder + CustomTransitionPage) ───
+          // ─── Full-screen modal routes ───
           GoRoute(
             path: '/schools',
+            name: 'add-school',
             pageBuilder: (context, state) => MaterialPage(
               key: state.pageKey,
               fullscreenDialog: true,
@@ -217,6 +341,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           ),
           GoRoute(
             path: '/document-check',
+            name: 'document-check',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: const DocumentCheckPage(),
@@ -229,6 +354,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           ),
           GoRoute(
             path: '/infrastructure',
+            name: 'infrastructure',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: const InfrastructurePage(),
@@ -243,6 +369,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           // ─── Individual Classroom Routes ───
           GoRoute(
             path: '/classroom-1',
+            name: 'classroom-1',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: Classroom1Page(
@@ -259,6 +386,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           ),
           GoRoute(
             path: '/classroom-2',
+            name: 'classroom-2',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: Classroom2Page(
@@ -275,6 +403,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           ),
           GoRoute(
             path: '/classroom-3',
+            name: 'classroom-3',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: Classroom3Page(
@@ -289,10 +418,9 @@ GoRouter createRouter(AuthProvider authProvider) {
               },
             ),
           ),
-
-          // Keep the original classroom page for backward compatibility if needed
           GoRoute(
             path: '/classroom',
+            name: 'classroom',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: const ClassroomObservationPage(),
@@ -304,8 +432,10 @@ GoRouter createRouter(AuthProvider authProvider) {
             ),
           ),
 
+          // More Assessment Routes
           GoRoute(
             path: '/leadership',
+            name: 'leadership',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: const LeadershipPage(),
@@ -318,6 +448,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           ),
           GoRoute(
             path: '/parents',
+            name: 'parents',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: const ParentPage(),
@@ -330,6 +461,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           ),
           GoRoute(
             path: '/students',
+            name: 'students',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: const StudentParticipationPage(),
@@ -342,6 +474,7 @@ GoRouter createRouter(AuthProvider authProvider) {
           ),
           GoRoute(
             path: '/textbooks-teaching',
+            name: 'textbooks-teaching',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: const TextbooksTeachingPage(),
@@ -353,47 +486,57 @@ GoRouter createRouter(AuthProvider authProvider) {
             ),
           ),
 
-          // Offline pages (remain regular pages)
+          // Offline pages
           GoRoute(
             path: '/offline-assessments',
+            name: 'offline-assessments',
             builder: (context, state) => const OfflineAssessmentsPage(),
           ),
           GoRoute(
             path: '/offline-students',
+            name: 'offline-students',
             builder: (context, state) => const OfflineStudentsPage(),
           ),
           GoRoute(
             path: '/offline-document-checks',
+            name: 'offline-document-checks',
             builder: (context, state) => const OfflineDocumentChecksPage(),
           ),
           GoRoute(
             path: '/offline-infrastructure',
+            name: 'offline-infrastructure',
             builder: (context, state) => const OfflineInfrastructurePage(),
           ),
           GoRoute(
             path: '/offline-classroom-observation',
+            name: 'offline-classroom-observation',
             builder: (context, state) => const OfflineClassroomObservationPage(),
           ),
           GoRoute(
             path: '/offline-leadership',
+            name: 'offline-leadership',
             builder: (context, state) => const OfflineLeadershipPage(),
           ),
           GoRoute(
             path: '/offline-parent-participation',
+            name: 'offline-parent-participation',
             builder: (context, state) => const OfflineParentParticipationPage(),
           ),
           GoRoute(
             path: '/offline-student-participation',
+            name: 'offline-student-participation',
             builder: (context, state) => const OfflineStudentParticipationPage(),
           ),
           GoRoute(
             path: '/offline-textbooks-teaching',
+            name: 'offline-textbooks-teaching',
             builder: (context, state) => const OfflineTextbooksTeachingPage(),
           ),
 
           // Completion page
           GoRoute(
             path: '/assessment-complete',
+            name: 'assessment-complete',
             builder: (context, state) {
               final extra = state.extra as Map<String, dynamic>? ?? {};
               final bool isOffline = extra['isOffline'] as bool? ?? false;
@@ -405,9 +548,10 @@ GoRouter createRouter(AuthProvider authProvider) {
             },
           ),
 
-          // Sample / misc pages
+          // Sample page
           GoRoute(
             path: '/sample-dashboard',
+            name: 'sample-dashboard',
             builder: (context, state) => const SampleDashboardPage(),
           ),
         ],

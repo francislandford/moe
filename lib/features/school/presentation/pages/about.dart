@@ -88,7 +88,7 @@ class _AboutPageState extends State<AboutPage> with SingleTickerProviderStateMix
                     ),
                     const SizedBox(height: 24),
                     Text(
-                      'School Quality Assessment',
+                      'School Mapping, Quality Assessment and Performance App',
                       style: TextStyle(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,

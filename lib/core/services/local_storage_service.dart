@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
 
 class LocalStorageService {
   // Public box names
@@ -26,8 +26,9 @@ class LocalStorageService {
   static final _onlineController = StreamController<bool>.broadcast();
   static bool _lastKnownOnline = true; // optimistic start
   static Timer? _connectivityTimer;
+  static StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
-  // Initialize Hive boxes + start periodic connectivity check
+  // Initialize Hive boxes + start connectivity monitoring
   static Future<void> init() async {
     await Hive.openBox(dropdownBox);
     await Hive.openBox(pendingSchoolsBox);
@@ -38,15 +39,20 @@ class LocalStorageService {
     await Hive.openBox(pendingClassroomObservationBox);
     await Hive.openBox(failedSyncsBox);
 
-    // Start periodic check every 5 seconds
-    _startConnectivityCheck();
+    // Start connectivity monitoring
+    _startConnectivityMonitoring();
   }
 
-  static void _startConnectivityCheck() {
+  static void _startConnectivityMonitoring() {
+    // Listen to connectivity changes (real-time)
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+      _handleConnectivityChange(results);
+    });
+
     // Immediate first check
     _checkConnectivity();
 
-    // Then every 5 seconds
+    // Also check periodically every 5 seconds as backup
     _connectivityTimer?.cancel();
     _connectivityTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _checkConnectivity();
@@ -55,25 +61,27 @@ class LocalStorageService {
 
   static Future<void> _checkConnectivity() async {
     try {
-      final connectivityResult = await Connectivity().checkConnectivity();
-      final isOnline = connectivityResult != ConnectivityResult.none;
-
-      if (isOnline != _lastKnownOnline) {
-        _lastKnownOnline = isOnline;
-        if (!_onlineController.isClosed) {
-          _onlineController.add(isOnline);
-        }
-        debugPrint('Connectivity changed: ${isOnline ? "Online" : "Offline"}');
-      }
+      final results = await Connectivity().checkConnectivity();
+      _handleConnectivityChange(results);
     } catch (e) {
       debugPrint('Connectivity check failed: $e');
-      // Assume offline on error
-      if (_lastKnownOnline != false) {
-        _lastKnownOnline = false;
-        if (!_onlineController.isClosed) {
-          _onlineController.add(false);
-        }
+      _updateStatus(false);
+    }
+  }
+
+  static void _handleConnectivityChange(List<ConnectivityResult> results) {
+    // Check if any connectivity result is not 'none'
+    final hasConnection = results.any((result) => result != ConnectivityResult.none);
+    _updateStatus(hasConnection);
+  }
+
+  static void _updateStatus(bool isOnline) {
+    if (isOnline != _lastKnownOnline) {
+      _lastKnownOnline = isOnline;
+      if (!_onlineController.isClosed) {
+        _onlineController.add(isOnline);
       }
+      debugPrint('Connectivity changed: ${isOnline ? "Online" : "Offline"}');
     }
   }
 
@@ -180,6 +188,12 @@ class LocalStorageService {
     final updated = current.where((a) => a['queuedAt'] != toRemove['queuedAt']).toList();
     final box = Hive.box(pendingAssessmentsBox);
     await box.put('pending', updated);
+
+    // Add this debug code in your sync method where you call removePendingAssessment
+    debugPrint('Attempting to remove assessment with queuedAt: ${toRemove['queuedAt']}');
+    debugPrint('Current pending count before removal: ${getPendingAssessments().length}');
+// After removal
+    debugPrint('Current pending count after removal: ${getPendingAssessments().length}');
   }
 
   // ─── Save Failed Syncs for Retry ───────────────────────────────────────
@@ -390,11 +404,21 @@ class LocalStorageService {
   // Call this when app is disposed / no longer needed (optional)
   static void dispose() {
     _connectivityTimer?.cancel();
+    _connectivitySubscription?.cancel();
     _onlineController.close();
   }
 
-  // Legacy method (for backward compatibility) — prefer onlineStatusStream
+  // Check if device has any network connection
   static Future<bool> isOnline() async {
-    return _lastKnownOnline;
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return results.any((result) => result != ConnectivityResult.none);
+    } catch (e) {
+      debugPrint('isOnline check failed: $e');
+      return _lastKnownOnline; // fallback to cached value on error
+    }
   }
+
+  // Add this method to get the current online status immediately
+  static bool get currentOnlineStatus => _lastKnownOnline;
 }

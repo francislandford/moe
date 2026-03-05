@@ -133,7 +133,7 @@ class SchoolProvider with ChangeNotifier {
     try {
       final headers = auth.getAuthHeaders();
       final response = await http.get(
-        Uri.parse('${AppUrl.url}/user/county'),
+        Uri.parse('${AppUrl.url}/counties'),
         headers: headers,
       );
 
@@ -290,7 +290,7 @@ class SchoolProvider with ChangeNotifier {
     }
   }
 
-  // Create school method remains the same
+  // Create school method with improved error handling
   Future<Map<String, dynamic>> createSchool(Map<String, dynamic> data, BuildContext context) async {
     _setLoading(true);
     final auth = Provider.of<AuthProvider>(context, listen: false);
@@ -309,6 +309,9 @@ class SchoolProvider with ChangeNotifier {
 
     try {
       if (isOnline) {
+        debugPrint('📤 Sending school data to server: ${AppUrl.url}/schools');
+        debugPrint('📦 Payload: ${jsonEncode(data)}');
+
         final res = await http.post(
           Uri.parse('${AppUrl.url}/schools'),
           headers: {
@@ -316,27 +319,65 @@ class SchoolProvider with ChangeNotifier {
             'Content-Type': 'application/json',
           },
           body: jsonEncode(data),
+        ).timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {
+            debugPrint('⏰ Request timeout');
+            throw Exception('Request timeout');
+          },
         );
 
+        debugPrint('📥 Response status: ${res.statusCode}');
+        debugPrint('📥 Response body: ${res.body}');
+
+        // Accept both 200 and 201 as success
         if (res.statusCode == 201 || res.statusCode == 200) {
           incrementSessionSchoolCount();
           await _syncPendingSchools(context);
           await _refreshMySchools(token);
 
-          final responseData = jsonDecode(res.body);
+          try {
+            final responseData = jsonDecode(res.body);
+            return {
+              'success': true,
+              'message': responseData['message'] ?? 'School created successfully',
+              'data': responseData['data'] ?? responseData,
+            };
+          } catch (e) {
+            // If response is not JSON, still consider it success
+            return {
+              'success': true,
+              'message': 'School created successfully',
+              'data': data,
+            };
+          }
+        } else {
+          // Handle error responses
+          String errorMessage = 'Failed to create school (status ${res.statusCode})';
+          try {
+            final errorBody = jsonDecode(res.body);
+            errorMessage = errorBody['message'] ?? errorBody['error'] ?? errorMessage;
+          } catch (e) {
+            // If error response is not JSON, use status text
+            errorMessage = 'Server error: ${res.statusCode}';
+          }
+
+          // Save offline as fallback
+          await LocalStorageService.savePendingSchool({
+            ...data,
+            'user_id': auth.userId,
+            'queuedAt': DateTime.now().toIso8601String(),
+          });
+
           return {
             'success': true,
-            'message': 'School created successfully',
-            'data': responseData,
-          };
-        } else {
-          final errorBody = jsonDecode(res.body);
-          return {
-            'success': false,
-            'message': errorBody['message'] ?? 'Failed to create school (status ${res.statusCode})',
+            'message': 'Saved offline due to server error - will sync later',
+            'offline': true,
+            'data': data,
           };
         }
       } else {
+        // Offline - save to pending
         await LocalStorageService.savePendingSchool({
           ...data,
           'user_id': auth.userId,
@@ -350,8 +391,9 @@ class SchoolProvider with ChangeNotifier {
           'data': data,
         };
       }
-    } catch (e) {
-      debugPrint('Create school error: $e');
+    } on http.ClientException catch (e) {
+      debugPrint('🌐 Network error: $e');
+      // Network error - save offline
       await LocalStorageService.savePendingSchool({
         ...data,
         'user_id': auth.userId,
@@ -361,6 +403,21 @@ class SchoolProvider with ChangeNotifier {
       return {
         'success': true,
         'message': 'Network error — saved offline for later sync',
+        'offline': true,
+        'data': data,
+      };
+    } catch (e) {
+      debugPrint('❌ Create school error: $e');
+      // Any other error - save offline
+      await LocalStorageService.savePendingSchool({
+        ...data,
+        'user_id': auth.userId,
+        'queuedAt': DateTime.now().toIso8601String(),
+      });
+      incrementSessionSchoolCount();
+      return {
+        'success': true,
+        'message': 'Error occurred — saved offline for later sync',
         'offline': true,
         'data': data,
       };
@@ -398,6 +455,8 @@ class SchoolProvider with ChangeNotifier {
     final pending = LocalStorageService.getPendingSchools();
     if (pending.isEmpty) return;
 
+    debugPrint('🔄 Syncing ${pending.length} pending schools...');
+
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final headers = {
       ...auth.getAuthHeaders(),
@@ -412,25 +471,116 @@ class SchoolProvider with ChangeNotifier {
         schoolData.remove('queuedAt');
         schoolData.remove('user_id');
 
+        debugPrint('📤 Syncing school: ${schoolData['school_code']}');
+
         final res = await http.post(
           Uri.parse('${AppUrl.url}/schools'),
           headers: headers,
           body: jsonEncode(schoolData),
-        );
+        ).timeout(const Duration(seconds: 30));
 
-        if (res.statusCode != 201 && res.statusCode != 200) {
+        // Accept both 200 and 201 as success
+        if (res.statusCode == 201 || res.statusCode == 200) {
+          debugPrint('✅ Synced school: ${schoolData['school_code']}');
+          // Success - don't add to failed list
+        } else {
+          debugPrint('❌ Failed to sync school: ${schoolData['school_code']} - Status: ${res.statusCode}');
           failed.add(school);
         }
       } catch (e) {
-        debugPrint('Sync failed for one school: $e');
+        debugPrint('❌ Sync failed for school: $e');
         failed.add(school);
       }
     }
 
-    await Hive.box(LocalStorageService.pendingSchoolsBox).put('pending', failed);
-
-    if (failed.isEmpty) {
+    // Update pending queue with failed items
+    if (failed.isNotEmpty) {
+      debugPrint('⚠️ ${failed.length} schools failed to sync, keeping in queue');
+      await Hive.box(LocalStorageService.pendingSchoolsBox).put('pending', failed);
+    } else {
+      debugPrint('✅ All pending schools synced successfully');
       await LocalStorageService.clearPendingSchools();
+    }
+  }
+
+  // NEW: Check if a school has complete data - FIXED (removed context dependency)
+  Future<Map<String, dynamic>> checkSchoolCompleteness(String schoolCode, String token) async {
+    try {
+      if (token.isEmpty) {
+        return {'success': false, 'message': 'Not authenticated'};
+      }
+
+      final headers = {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
+
+      final response = await http.get(
+        Uri.parse('${AppUrl.url}/schools/$schoolCode/completeness'),
+        headers: headers,
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        final errorData = jsonDecode(response.body);
+        return {
+          'success': false,
+          'message': errorData['message'] ?? 'Failed to check school completeness'
+        };
+      }
+    } on http.ClientException catch (e) {
+      debugPrint('🌐 Network error checking completeness: $e');
+      return {'success': false, 'message': 'Network error. Please check your connection.'};
+    } catch (e) {
+      debugPrint('❌ Error checking school completeness: $e');
+      return {'success': false, 'message': 'Error checking school status'};
+    }
+  }
+
+  // NEW: Delete an incomplete school - FIXED (removed context dependency)
+  Future<Map<String, dynamic>> deleteIncompleteSchool(String schoolCode, String token) async {
+    try {
+      if (token.isEmpty) {
+        return {'success': false, 'message': 'Not authenticated'};
+      }
+
+      final headers = {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
+
+      final response = await http.delete(
+        Uri.parse('${AppUrl.url}/schools/$schoolCode/incomplete'),
+        headers: headers,
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        // Remove from local cache if present
+        final cachedSchools = LocalStorageService.getFromCache('my_schools');
+        if (cachedSchools != null && cachedSchools is List) {
+          final updatedSchools = (cachedSchools as List)
+              .where((s) => s['school_code'] != schoolCode)
+              .toList();
+          await LocalStorageService.saveToCache('my_schools', updatedSchools);
+        }
+
+        return jsonDecode(response.body);
+      } else {
+        final errorData = jsonDecode(response.body);
+        return {
+          'success': false,
+          'message': errorData['message'] ?? 'Failed to delete school'
+        };
+      }
+    } on http.ClientException catch (e) {
+      debugPrint('🌐 Network error deleting school: $e');
+      return {'success': false, 'message': 'Network error. Please check your connection.'};
+    } catch (e) {
+      debugPrint('❌ Error deleting school: $e');
+      return {'success': false, 'message': 'Error deleting school'};
     }
   }
 

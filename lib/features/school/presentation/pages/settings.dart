@@ -67,8 +67,48 @@ final ValueNotifier<SyncProgress> syncProgressNotifier = ValueNotifier<SyncProgr
   ),
 );
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  int _pendingCount = 0;
+  bool _isLoadingCount = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPendingCount();
+
+    // Listen to sync progress to update count when sync completes
+    syncProgressNotifier.addListener(_onSyncProgressUpdate);
+  }
+
+  @override
+  void dispose() {
+    syncProgressNotifier.removeListener(_onSyncProgressUpdate);
+    super.dispose();
+  }
+
+  void _onSyncProgressUpdate() {
+    if (syncProgressNotifier.value.progress >= 1.0) {
+      // Sync completed, reload pending count
+      _loadPendingCount();
+    }
+  }
+
+  Future<void> _loadPendingCount() async {
+    final count = await _getTotalPendingCount();
+    if (mounted) {
+      setState(() {
+        _pendingCount = count;
+        _isLoadingCount = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -87,357 +127,422 @@ class SettingsPage extends StatelessWidget {
         backgroundColor: AppColors.primary,
         textColor: Colors.white,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
-          onPressed: () => context.pop(),
+          icon: const Icon(Icons.settings, color: Colors.white),
+          onPressed: () => {},
         ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        children: [
-          // ─── Account Section ───────────────────────────────────────────────
-          _buildSectionHeader(context, 'Account'),
-          ListTile(
-            leading: const CircleAvatar(
-              backgroundColor: AppColors.primary,
-              child: Icon(Icons.person, color: Colors.white),
-            ),
-            title: Text(
-              name,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text(username),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('View full profile coming soon')),
-              );
-            },
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.badge_outlined),
-            title: const Text('Role / Position'),
-            subtitle: Text(usertype),
-          ),
-          ListTile(
-            leading: const Icon(Icons.phone_outlined),
-            title: const Text('Phone Number'),
-            subtitle: Text(phone),
-          ),
-          const Divider(height: 32),
-
-          // ─── Data Management Section ───────────────────────────────────
-          _buildSectionHeader(context, 'Data Management'),
-
-          // Preload Offline Data
-          ListTile(
-            leading: const Icon(Icons.cloud_download_outlined, color: AppColors.primary),
-            title: const Text('Preload Offline Data'),
-            subtitle: const Text('Download all reference data for offline use'),
-            trailing: ValueListenableBuilder<bool>(
-              valueListenable: ValueNotifier<bool>(DataPreloaderService.isPreloading),
-              builder: (context, isPreloading, child) {
-                if (isPreloading) {
-                  return const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-                    ),
-                  );
-                }
-                return const Icon(Icons.download_rounded);
-              },
-            ),
-            onTap: () async {
-              if (DataPreloaderService.isPreloading) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Preloading already in progress...'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-
-              // Show confirmation dialog
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Preload Offline Data'),
-                  content: const Text(
-                      'This will download all reference data (schools, grades, subjects, questions) for offline use. '
-                          'This may take a few moments and requires an internet connection.'
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancel'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: const Text('Start Download'),
-                    ),
-                  ],
+        actions: [
+          // Online/Offline Indicator
+          StreamBuilder<bool>(
+            stream: LocalStorageService.onlineStatusStream,
+            initialData: LocalStorageService.currentOnlineStatus,
+            builder: (context, snapshot) {
+              final bool isOnline = snapshot.data ?? true;
+              return Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: isOnline ? Colors.green : Colors.orange,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white, width: 1),
                 ),
-              );
-
-              if (confirm == true && context.mounted) {
-                // Show preload dialog with progress
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (BuildContext context) {
-                    return const PreloadDataDialog();
-                  },
-                );
-
-                // Start preloading
-                await DataPreloaderService.preloadAllData(context);
-              }
-            },
-          ),
-
-          // Sync All Offline Data
-          ListTile(
-            leading: const Icon(Icons.sync_rounded, color: AppColors.primary),
-            title: const Text('Sync All Offline Data'),
-            subtitle: const Text('Upload all pending submissions to server'),
-            trailing: FutureBuilder<int>(
-              future: _getTotalPendingCount(),
-              builder: (context, snapshot) {
-                if (syncProgressNotifier.value.progress > 0 && syncProgressNotifier.value.progress < 1.0) {
-                  return const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isOnline ? Icons.wifi : Icons.wifi_off,
+                      color: Colors.white,
+                      size: 16,
                     ),
-                  );
-                }
-                final count = snapshot.data ?? 0;
-                if (count > 0) {
-                  return Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      '$count',
+                    const SizedBox(width: 4),
+                    Text(
+                      isOnline ? 'Online' : 'Offline',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                  );
-                }
-                return const Icon(Icons.sync_rounded);
-              },
-            ),
-            onTap: () async {
-              if (!await LocalStorageService.isOnline()) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('No internet connection. Connect and try again.'),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-
-              final totalCount = await _getTotalPendingCount();
-              if (totalCount == 0) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('No pending data to sync.'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-                return;
-              }
-
-              // Show confirmation dialog
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Sync All Offline Data'),
-                  content: Text(
-                      'This will upload $totalCount pending item(s) to the server. '
-                          'This may take a few moments and requires an internet connection.'
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancel'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: const Text('Start Sync'),
-                    ),
                   ],
                 ),
               );
-
-              if (confirm == true && context.mounted) {
-                // Show sync dialog with progress
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (BuildContext context) {
-                    return const SyncDataDialog();
-                  },
-                );
-
-                // Start syncing
-                await _syncAllOfflineData(context);
-              }
             },
           ),
-
-          ListTile(
-            leading: const Icon(Icons.info_outline, color: Colors.grey),
-            title: const Text('Storage Info'),
-            subtitle: FutureBuilder<int>(
-              future: _getTotalPendingCount(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Text('Loading...');
-                }
-                return Text('Pending items: ${snapshot.data}');
-              },
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              _showStorageInfo(context);
-            },
-          ),
-          const Divider(height: 32),
-
-          // ─── App Preferences ───────────────────────────────────────────────
-          _buildSectionHeader(context, 'App Preferences'),
-          SwitchListTile(
-            secondary: Icon(
-              themeProvider.isDarkMode ? Icons.dark_mode : Icons.light_mode,
-              color: themeProvider.isDarkMode ? Colors.yellow[700] : AppColors.primary,
-            ),
-            title: const Text('Dark Mode'),
-            subtitle: const Text('Switch between light and dark theme'),
-            value: themeProvider.isDarkMode,
-            onChanged: (value) {
-              themeProvider.toggleTheme();
-            },
-          ),
-          const Divider(height: 32),
-
-          // ─── About & Support ──────────────────────────────────────────────
-          _buildSectionHeader(context, 'About & Support'),
-          ListTile(
-            leading: const Icon(Icons.info_outline),
-            title: const Text('About the App'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push('/about'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.help_outline),
-            title: const Text('Help & Manual'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('User manual coming soon')),
-              );
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.contact_support_outlined),
-            title: const Text('Contact Support'),
-            subtitle: const Text('Email or call MOE support team'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('support@moe.gov.lr')),
-              );
-            },
-          ),
-          const Divider(height: 32),
-
-          // ─── Logout Section ───────────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: OutlinedButton.icon(
-              icon: const Icon(Icons.logout, color: Colors.redAccent),
-              label: const Text(
-                'Log Out',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.redAccent,
-                ),
-              ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.redAccent,
-                side: const BorderSide(color: Colors.redAccent, width: 2),
-                minimumSize: const Size.fromHeight(56),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: () async {
-                final confirm = await showDialog<bool>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Log Out'),
-                    content: const Text('Are you sure you want to log out?'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('Cancel'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text('Log Out', style: TextStyle(color: Colors.red)),
-                      ),
-                    ],
-                  ),
-                );
-
-                if (confirm == true && context.mounted) {
-                  await Provider.of<AuthProvider>(context, listen: false).logout();
-                  // Router will redirect to login automatically
-                }
-              },
-            ),
-          ),
-
-          const SizedBox(height: 60),
-
-          // Footer version & credits
-          Center(
-            child: Column(
-              children: [
-                Text(
-                  'School Quality Assessment • v1.0.0',
-                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '© 2026 Ministry of Education, Liberia',
-                  style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 40),
         ],
+      ),
+      body: StreamBuilder<bool>(
+        stream: LocalStorageService.onlineStatusStream,
+        initialData: LocalStorageService.currentOnlineStatus,
+        builder: (context, snapshot) {
+          final bool isOnline = snapshot.data ?? true;
+
+          return ListView(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            children: [
+              // Offline warning banner
+              if (!isOnline)
+                Container(
+                  width: double.infinity,
+                  color: Colors.orange.shade100,
+                  padding: const EdgeInsets.all(12),
+                  child: const Text(
+                    'You are offline. Sync will be available when connected.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.w600),
+                  ),
+                ),
+
+              // ─── Account Section ───────────────────────────────────────────────
+              _buildSectionHeader(context, 'Account'),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: AppColors.primary,
+                  child: Icon(Icons.person, color: Colors.white),
+                ),
+                title: Text(
+                  name,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(username),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('View full profile coming soon')),
+                  );
+                },
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.badge_outlined),
+                title: const Text('Role / Position'),
+                subtitle: Text(usertype),
+              ),
+              ListTile(
+                leading: const Icon(Icons.phone_outlined),
+                title: const Text('Phone Number'),
+                subtitle: Text(phone),
+              ),
+              // ADDED: Reset Password Option
+              ListTile(
+                leading: const Icon(Icons.lock_reset_rounded, color: AppColors.primary),
+                title: const Text('Reset Password'),
+                subtitle: const Text('Change your account password'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  // Navigate to forgot password page
+                  context.push('/forgot-password');
+                },
+              ),
+              const Divider(height: 32),
+
+              // ─── Data Management Section ───────────────────────────────────
+              _buildSectionHeader(context, 'Data Management'),
+
+              // Preload Offline Data
+              ListTile(
+                leading: const Icon(Icons.cloud_download_outlined, color: AppColors.primary),
+                title: const Text('Preload Offline Data'),
+                subtitle: const Text('Download all reference data for offline use'),
+                trailing: ValueListenableBuilder<bool>(
+                  valueListenable: ValueNotifier<bool>(DataPreloaderService.isPreloading),
+                  builder: (context, isPreloading, child) {
+                    if (isPreloading) {
+                      return const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                        ),
+                      );
+                    }
+                    return const Icon(Icons.download_rounded);
+                  },
+                ),
+                onTap: () async {
+                  if (DataPreloaderService.isPreloading) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Preloading already in progress...'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+
+                  if (!await LocalStorageService.isOnline()) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('No internet connection. Connect and try again.'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+
+                  // Show confirmation dialog
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Preload Offline Data'),
+                      content: const Text(
+                          'This will download all reference data (schools, grades, subjects, questions) for offline use. '
+                              'This may take a few moments and requires an internet connection.'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('Start Download'),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirm == true && context.mounted) {
+                    // Show preload dialog with progress
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (BuildContext context) {
+                        return const PreloadDataDialog();
+                      },
+                    );
+
+                    // Start preloading
+                    await DataPreloaderService.preloadAllData(context);
+                  }
+                },
+              ),
+
+              // Sync All Offline Data
+              ListTile(
+                leading: Icon(Icons.sync_rounded, color: isOnline ? AppColors.primary : Colors.grey),
+                title: const Text('Sync All Offline Data'),
+                subtitle: const Text('Upload all pending submissions to server'),
+                trailing: _isLoadingCount
+                    ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                  ),
+                )
+                    : syncProgressNotifier.value.progress > 0 && syncProgressNotifier.value.progress < 1.0
+                    ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                  ),
+                )
+                    : _pendingCount > 0
+                    ? Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '$_pendingCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                )
+                    : Icon(Icons.sync_rounded, color: isOnline ? AppColors.primary : Colors.grey),
+                onTap: isOnline && !_isLoadingCount
+                    ? () async {
+                  if (_pendingCount == 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('No pending data to sync.'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                    return;
+                  }
+
+                  // Show confirmation dialog
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Sync All Offline Data'),
+                      content: Text(
+                          'This will upload $_pendingCount pending item(s) to the server. '
+                              'This may take a few moments and requires an internet connection.'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('Start Sync'),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirm == true && context.mounted) {
+                    // Show sync dialog with progress
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (BuildContext context) {
+                        return const SyncDataDialog();
+                      },
+                    );
+
+                    // Start syncing
+                    await _syncAllOfflineData(context);
+
+                    // Reload pending count after sync
+                    await _loadPendingCount();
+                  }
+                }
+                    : null, // Disable when offline or loading
+              ),
+
+              ListTile(
+                leading: const Icon(Icons.info_outline, color: Colors.grey),
+                title: const Text('Storage Info'),
+                subtitle: Text(_isLoadingCount ? 'Loading...' : 'Pending items: $_pendingCount'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  _showStorageInfo(context);
+                },
+              ),
+              const Divider(height: 32),
+
+              // ─── App Preferences ───────────────────────────────────────────────
+              _buildSectionHeader(context, 'App Preferences'),
+              SwitchListTile(
+                secondary: Icon(
+                  themeProvider.isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                  color: themeProvider.isDarkMode ? Colors.yellow[700] : AppColors.primary,
+                ),
+                title: const Text('Dark Mode'),
+                subtitle: const Text('Switch between light and dark theme'),
+                value: themeProvider.isDarkMode,
+                onChanged: (value) {
+                  themeProvider.toggleTheme();
+                },
+              ),
+              const Divider(height: 32),
+
+              // ─── About & Support ──────────────────────────────────────────────
+              _buildSectionHeader(context, 'About & Support'),
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text('About the App'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/about'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.help_outline),
+                title: const Text('Help & Manual'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('User manual coming soon')),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.contact_support_outlined),
+                title: const Text('Contact Support'),
+                subtitle: const Text('Email or call MOE support team'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('support@moe.gov.lr')),
+                  );
+                },
+              ),
+              const Divider(height: 32),
+
+              // ─── Logout Section ───────────────────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.logout, color: Colors.redAccent),
+                  label: const Text(
+                    'Log Out',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.redAccent,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.redAccent,
+                    side: const BorderSide(color: Colors.redAccent, width: 2),
+                    minimumSize: const Size.fromHeight(56),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('Log Out'),
+                        content: const Text('Are you sure you want to log out?'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('Cancel'),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, true),
+                            child: const Text('Log Out', style: TextStyle(color: Colors.red)),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    if (confirm == true && context.mounted) {
+                      await Provider.of<AuthProvider>(context, listen: false).logout();
+                      // Router will redirect to login automatically
+                    }
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 60),
+
+              // Footer version & credits
+              Center(
+                child: Column(
+                  children: [
+                    Text(
+                      'School Quality Assessment • v1.0.0',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '© 2026 Ministry of Education, Liberia',
+                      style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 40),
+            ],
+          );
+        },
       ),
     );
   }
@@ -487,7 +592,7 @@ class SettingsPage extends StatelessWidget {
             'school': school,
           }),
         );
-        if (res.statusCode != 201) return false;
+        if (res.statusCode != 200 && res.statusCode != 201) return false;
       }
 
       // 2. Staff records
@@ -500,7 +605,7 @@ class SettingsPage extends StatelessWidget {
             'school': school,
           }),
         );
-        if (res.statusCode != 201) return false;
+        if (res.statusCode != 200 && res.statusCode != 201) return false;
       }
 
       // 3. Required Teachers
@@ -514,7 +619,7 @@ class SettingsPage extends StatelessWidget {
             'school': school,
           }),
         );
-        if (res.statusCode != 201) return false;
+        if (res.statusCode != 200 && res.statusCode != 201) return false;
       }
 
       // 4. Verify Student Records (tabular format)
@@ -536,7 +641,7 @@ class SettingsPage extends StatelessWidget {
           headers: headers,
           body: jsonEncode(payload),
         );
-        if (res.statusCode != 201) return false;
+        if (res.statusCode != 200 && res.statusCode != 201) return false;
       }
 
       // 5. Fee records
@@ -549,7 +654,7 @@ class SettingsPage extends StatelessWidget {
             'school': school,
           }),
         );
-        if (res.statusCode != 201) return false;
+        if (res.statusCode != 200 && res.statusCode != 201) return false;
       }
 
       return true;

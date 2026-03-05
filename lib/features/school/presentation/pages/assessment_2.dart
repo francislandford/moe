@@ -16,6 +16,7 @@ class SchoolAssessmentFormPage extends StatelessWidget {
     final String? schoolCode = extra?['schoolCode'] as String?;
     final String? schoolName = extra?['schoolName'] as String?;
     final String? schoolLevel = extra?['level'] as String?;
+    final String? firstAssessment = extra?['firstAssessment'] as String?;
 
     return ChangeNotifierProvider(
       create: (_) {
@@ -25,7 +26,6 @@ class SchoolAssessmentFormPage extends StatelessWidget {
         provider.level = schoolLevel ?? 'ECE';
         provider.reqLevel = provider.level;
 
-        // Load grades, positions, and fees from cache first, then refresh silently
         WidgetsBinding.instance.addPostFrameCallback((_) {
           provider.loadGradesFromCache(provider.level);
           provider.loadPositionsFromCache();
@@ -41,6 +41,7 @@ class SchoolAssessmentFormPage extends StatelessWidget {
         schoolCode: schoolCode,
         schoolName: schoolName,
         schoolLevel: schoolLevel,
+        firstAssessment: firstAssessment,
       ),
     );
   }
@@ -50,11 +51,13 @@ class _SchoolAssessmentFormContent extends StatefulWidget {
   final String? schoolCode;
   final String? schoolName;
   final String? schoolLevel;
+  final String? firstAssessment;
 
   const _SchoolAssessmentFormContent({
     this.schoolCode,
     this.schoolName,
     this.schoolLevel,
+    this.firstAssessment,
   });
 
   @override
@@ -65,22 +68,25 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   final _formKey = GlobalKey<FormState>();
   final _scrollController = ScrollController();
 
+  final _verifyCommentController = TextEditingController();
+  String? _teachersPresent = 'Yes';
+
   @override
   void initState() {
     super.initState();
+    debugPrint('First Assessment value received: ${widget.firstAssessment}');
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
+    _verifyCommentController.dispose();
     super.dispose();
   }
 
-  // Calculate required teachers based on level and update UI
   void _onStudentsChanged(String value, AssessmentProvider provider) {
     provider.reqStudents = value;
 
-    // Calculate required teachers
     final studentsText = value.trim();
     if (studentsText.isNotEmpty) {
       final students = int.tryParse(studentsText) ?? 0;
@@ -97,13 +103,15 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
       provider.reqNumRequired = '';
     }
 
-    // Force UI update
     provider.notifyListeners();
   }
 
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<AssessmentProvider>(context);
+
+    final bool isFirstAssessmentNo = widget.firstAssessment == 'No';
+    debugPrint('isFirstAssessmentNo: $isFirstAssessmentNo');
 
     return Scaffold(
       appBar: CustomAppBar(
@@ -155,7 +163,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
       ),
       body: StreamBuilder<bool>(
         stream: LocalStorageService.onlineStatusStream,
-        initialData: true,
+        initialData: LocalStorageService.currentOnlineStatus,
         builder: (context, snapshot) {
           final bool isOnline = snapshot.data ?? true;
 
@@ -183,13 +191,13 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // ─── 1.1 Absent Teachers ───────────────────────────────
-                        _buildAbsentTeachersSection(provider),
-                        const SizedBox(height: 32),
+                        // REMOVED: Absent Teachers Section completely
 
                         // ─── 1.2 Total Staff with Position Dropdown ─────────────
-                        _buildTotalStaffSection(provider),
-                        const SizedBox(height: 32),
+                        if (!isFirstAssessmentNo) ...[
+                          _buildTotalStaffSection(provider),
+                          const SizedBox(height: 32),
+                        ],
 
                         // ─── 1.3 Required Teachers ─────────────────────────────
                         _sectionCard(
@@ -225,7 +233,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                                   child: TextFormField(
                                     initialValue: provider.reqAssTeacher,
                                     decoration: const InputDecoration(
-                                      labelText: 'Assisigned Teachers',
+                                      labelText: 'Assigned Teachers',
                                       border: OutlineInputBorder(),
                                     ),
                                     keyboardType: TextInputType.number,
@@ -265,7 +273,9 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                                   child: TextFormField(
                                     initialValue: provider.reqNumRequired,
                                     decoration: InputDecoration(
-                                      labelText: 'Teachers Required',
+                                      labelText: provider.reqNumRequired.isNotEmpty
+                                          ? provider.reqNumRequired
+                                          : 'Teachers Required',
                                       border: const OutlineInputBorder(),
                                       filled: true,
                                       fillColor: Colors.grey[100],
@@ -415,6 +425,50 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                             ],
                           ],
                         ),
+                        const SizedBox(height: 32),
+
+                        // ─── VERIFICATION SECTION ───────
+                        _sectionCard(
+                          title: 'Verification',
+                          children: [
+                            const Text(
+                              'Were all teachers present during the visit?',
+                              style: TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: RadioListTile<String>(
+                                    title: const Text('Yes'),
+                                    value: 'Yes',
+                                    groupValue: _teachersPresent,
+                                    onChanged: (v) => setState(() => _teachersPresent = v),
+                                    dense: true,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: RadioListTile<String>(
+                                    title: const Text('No'),
+                                    value: 'No',
+                                    groupValue: _teachersPresent,
+                                    onChanged: (v) => setState(() => _teachersPresent = v),
+                                    dense: true,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _verifyCommentController,
+                              decoration: const InputDecoration(
+                                labelText: 'Verification Comment',
+                                border: OutlineInputBorder(),
+                              ),
+                              maxLines: 4,
+                            ),
+                            const SizedBox(height: 24),
+                          ],
+                        ),
                         const SizedBox(height: 48),
 
                         // ─── Submit Button ───────────────────────────────────────
@@ -428,6 +482,9 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                                     ? null
                                     : () async {
                                   if (_formKey.currentState!.validate()) {
+                                    prov.teachersPresent = _teachersPresent ?? 'Yes';
+                                    prov.verifyComment = _verifyCommentController.text;
+
                                     final success = await prov.submitAllData(context);
                                     if (success && context.mounted) {
                                       ScaffoldMessenger.of(context).showSnackBar(
@@ -448,6 +505,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                                             'schoolCode': widget.schoolCode,
                                             'schoolName': widget.schoolName ?? prov.schoolName,
                                             'level': widget.schoolLevel ?? 'Unknown',
+                                            'firstAssessment': widget.firstAssessment,
                                           },
                                         );
                                       }
@@ -493,63 +551,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Absent Teachers Section - FIXED
-  // ────────────────────────────────────────────────
-  Widget _buildAbsentTeachersSection(AssessmentProvider provider) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '1.1 Staff Absent on Day of Assessment at ${provider.schoolName}',
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primary,
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            // Dynamic list of absent records
-            ...List.generate(provider.absentRecords.length, (index) {
-              return _absentRow(context, index, provider.absentRecords[index], provider);
-            }),
-
-            if (provider.absentRecords.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(
-                  child: Text(
-                    'No absent teachers recorded. Tap the button below to add.',
-                    style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-
-            const SizedBox(height: 16),
-
-            // Add button with key to ensure it's rebuildable
-            OutlinedButton.icon(
-              key: const ValueKey('add_absent_button'),
-              icon: const Icon(Icons.add),
-              label: const Text('Add Absent Teacher'),
-              onPressed: () {
-                provider.addAbsent();
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────────
-  // Total Staff Section - FIXED
+  // Total Staff Section
   // ────────────────────────────────────────────────
   Widget _buildTotalStaffSection(AssessmentProvider provider) {
     return Card(
@@ -614,7 +616,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Staff Row with Position Dropdown - FIXED
+  // Staff Row with Position Dropdown (RESTORED)
   // ────────────────────────────────────────────────
   Widget _staffRowWithPosition(
       BuildContext context,
@@ -649,7 +651,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                       labelText: 'Gender',
                       border: OutlineInputBorder(),
                     ),
-                    items: ['Male', 'Female', 'Other']
+                    items: ['Male', 'Female']
                         .map((e) => DropdownMenuItem(value: e, child: Text(e)))
                         .toList(),
                     onChanged: (v) {
@@ -668,12 +670,22 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                       labelText: 'Present',
                       border: OutlineInputBorder(),
                     ),
-                    items: ['Yes', 'No', 'Partial']
+                    items: const ['Yes', 'No', 'Partial']
                         .map((e) => DropdownMenuItem(value: e, child: Text(e)))
                         .toList(),
                     onChanged: (v) {
                       data['present'] = v;
                       provider.notifyListeners();
+
+                      // Reset excuse and reason when present changes
+                      if (v != 'No') {
+                        if (data['excuse'] != null) {
+                          data['excuse'] = 'Yes';
+                        }
+                        if (data['reason'] != null && data['reason'] is TextEditingController) {
+                          data['reason'].clear();
+                        }
+                      }
                     },
                     menuMaxHeight: 240,
                     dropdownColor: Theme.of(context).scaffoldBackgroundColor,
@@ -683,7 +695,51 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
             ),
             const SizedBox(height: 16),
 
-            // Position and Week Load in one row
+            // Conditionally show Excuse and Reason fields if Present is 'No'
+            if (data['present'] == 'No') ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: data['excuse'] ?? 'Yes',
+                      decoration: const InputDecoration(
+                        labelText: 'Excuse',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const ['Yes', 'No']
+                          .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                          .toList(),
+                      onChanged: (v) {
+                        data['excuse'] = v;
+                        provider.notifyListeners();
+                      },
+                      menuMaxHeight: 240,
+                      dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: TextFormField(
+                      controller: data['reason'] ?? TextEditingController(),
+                      decoration: const InputDecoration(
+                        labelText: 'Reason',
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 1,
+                      onChanged: (value) {
+                        if (data['reason'] == null) {
+                          data['reason'] = TextEditingController();
+                        }
+                        data['reason'].text = value;
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // Position (Dropdown) and Week Load (Text) in one row
             Row(
               children: [
                 Expanded(
@@ -786,116 +842,13 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
   }
 
   // ────────────────────────────────────────────────
-  // Absent Row - FIXED
-  // ────────────────────────────────────────────────
-  Widget _absentRow(
-      BuildContext context,
-      int index,
-      Map<String, dynamic> data,
-      AssessmentProvider provider,
-      ) {
-    return Card(
-      key: ValueKey('absent_row_$index'),
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextFormField(
-              controller: data['fname'],
-              decoration: const InputDecoration(
-                labelText: 'Full Name',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Bio ID and Pay ID in one row
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: data['bio_id'],
-                    decoration: const InputDecoration(
-                      labelText: 'Bio ID',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: TextFormField(
-                    controller: data['pay_id'],
-                    decoration: const InputDecoration(
-                      labelText: 'Pay ID',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // Excuse and Reason in one row
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: data['excuse'],
-                    decoration: const InputDecoration(
-                      labelText: 'Excuse',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const ['Yes', 'No']
-                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                        .toList(),
-                    onChanged: (v) {
-                      data['excuse'] = v;
-                      provider.notifyListeners();
-                    },
-                    menuMaxHeight: 240,
-                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: TextFormField(
-                    controller: data['reason'],
-                    decoration: const InputDecoration(
-                      labelText: 'Reason',
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 1,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                onPressed: () => provider.removeAbsent(index),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ────────────────────────────────────────────────
   // Verify Student Table Row with validation
   // ────────────────────────────────────────────────
-  // ────────────────────────────────────────────────
-// Verify Student Table Row with validation - FIXED
-// ────────────────────────────────────────────────
   Widget _verifyStudentTableRow(
       BuildContext context,
       String gradeName,
       AssessmentProvider provider,
       ) {
-    // Ensure record exists
     if (gradeName.isEmpty || gradeName == 'Unknown') {
       return const SizedBox.shrink();
     }

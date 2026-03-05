@@ -62,6 +62,8 @@ class _LoginPageState extends State<LoginPage> {
         // Show error message from provider
         final errorMsg = auth.errorMessage ?? 'Login failed. Please check your credentials.';
 
+        debugPrint('❌ Login error: $errorMsg'); // Debug log
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(errorMsg),
@@ -73,10 +75,12 @@ class _LoginPageState extends State<LoginPage> {
         );
       }
     } catch (e) {
+      debugPrint('❌ Login exception: $e'); // Debug log
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('An unexpected error occurred. Please try again.'),
+            content: Text('An unexpected error occurred: ${e.toString()}'),
             backgroundColor: AppColors.error,
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 4),
@@ -104,6 +108,11 @@ class _LoginPageState extends State<LoginPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       DataPreloaderService.preloadAllData(context).then((_) {
         // Close dialog after preload completes
+        if (mounted && Navigator.canPop(context)) {
+          Navigator.of(context).pop();
+        }
+      }).catchError((error) {
+        debugPrint('❌ Preload error: $error');
         if (mounted && Navigator.canPop(context)) {
           Navigator.of(context).pop();
         }
@@ -208,9 +217,8 @@ class _LoginPageState extends State<LoginPage> {
                         alignment: Alignment.centerRight,
                         child: TextButton(
                           onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Forgot password – contact support')),
-                            );
+                            // Navigate to forgot password email page
+                            context.push('/forgot-password');
                           },
                           child: Text(
                             'Forgot password?',

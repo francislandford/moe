@@ -24,6 +24,7 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
   String? _schoolName;
   String? _schoolCode;
   String? _schoolLevel;
+  String? _firstAssessment; // First assessment value
 
   // Main scored questions
   List<Map<String, dynamic>> _questions = [];
@@ -49,10 +50,14 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
     _schoolName = extra?['schoolName'] as String?;
     _schoolCode = extra?['schoolCode'] as String?;
     _schoolLevel = extra?['level'] as String?;
+    _firstAssessment = extra?['firstAssessment'] as String?; // Receive first assessment
 
     _schoolName ??= 'Unknown School';
     _schoolCode ??= 'N/A';
     _schoolLevel ??= 'Unknown Level';
+    // NO DEFAULT for _firstAssessment - keep as received
+
+    debugPrint('📥 DocumentCheckPage - Received firstAssessment: $_firstAssessment');
 
     if (mounted) setState(() {});
   }
@@ -275,12 +280,15 @@ class _DocumentCheckPageState extends State<DocumentCheckPage> {
     if (color == Colors.green || color == Colors.orange) {
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) {
+          debugPrint('📤 DocumentCheckPage - Sending firstAssessment: $_firstAssessment to leadership');
+
           context.push(
             '/leadership',
             extra: {
               'schoolCode': _schoolCode,
               'schoolName': _schoolName,
               'level': _schoolLevel,
+              'firstAssessment': _firstAssessment, // Pass the state variable
             },
           );
         }

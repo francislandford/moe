@@ -90,7 +90,9 @@ class MyApp extends StatelessWidget {
                 ),
                 child: MediaQuery(
                   data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
-                  child: routerChild ?? const SizedBox.shrink(),
+                  child: ConnectivitySnackbarWrapper(
+                    child: routerChild ?? const SizedBox.shrink(),
+                  ),
                 ),
               );
             },
@@ -109,5 +111,95 @@ extension AuthProviderExtension on AuthProvider {
     while (isLoading) {
       await Future.delayed(const Duration(milliseconds: 50));
     }
+  }
+}
+
+// Connectivity Snackbar Wrapper
+class ConnectivitySnackbarWrapper extends StatefulWidget {
+  final Widget child;
+
+  const ConnectivitySnackbarWrapper({super.key, required this.child});
+
+  @override
+  State<ConnectivitySnackbarWrapper> createState() => _ConnectivitySnackbarWrapperState();
+}
+
+class _ConnectivitySnackbarWrapperState extends State<ConnectivitySnackbarWrapper> {
+  bool _wasOffline = false;
+  bool _initialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenToConnectivity();
+  }
+
+  void _listenToConnectivity() {
+    LocalStorageService.onlineStatusStream.listen((isOnline) {
+      if (!mounted) return;
+
+      // Don't show anything on initial load
+      if (!_initialized) {
+        _initialized = true;
+        _wasOffline = !isOnline;
+        return;
+      }
+
+      // Show snackbar when connectivity changes
+      if (isOnline && _wasOffline) {
+        // Came back online
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: const [
+                Icon(Icons.wifi, color: Colors.white, size: 20),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '✓ Back Online',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3), // Changed from 5 to 3
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.all(10),
+          ),
+        );
+      } else if (!isOnline && !_wasOffline) {
+        // Went offline
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: const [
+                Icon(Icons.wifi_off, color: Colors.white, size: 20),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Offline Mode - Saving Locally',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 4),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.all(10),
+          ),
+        );
+      }
+
+      _wasOffline = !isOnline;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.child;
   }
 }

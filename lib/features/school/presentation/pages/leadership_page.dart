@@ -24,6 +24,7 @@ class _LeadershipPageState extends State<LeadershipPage> {
   String? _schoolName;
   String? _schoolCode;
   String? _schoolLevel;
+  String? _firstAssessment; // First assessment value - NO DEFAULT VALUE
 
   // Scored questions
   List<Map<String, dynamic>> _questions = [];
@@ -47,10 +48,15 @@ class _LeadershipPageState extends State<LeadershipPage> {
     _schoolName = extra?['schoolName'] as String?;
     _schoolCode = extra?['schoolCode'] as String?;
     _schoolLevel = extra?['level'] as String?;
+    _firstAssessment = extra?['firstAssessment'] as String?; // Receive first assessment - NO DEFAULT VALUE
 
     _schoolName ??= 'Unknown School';
     _schoolCode ??= 'N/A';
     _schoolLevel ??= 'Unknown Level';
+    // REMOVED: _firstAssessment ??= 'Yes'; - No default value!
+
+    // Debug log to see what value we received
+    debugPrint('🔍 LeadershipPage - Received firstAssessment: $_firstAssessment');
 
     if (mounted) setState(() {});
   }
@@ -219,14 +225,35 @@ class _LeadershipPageState extends State<LeadershipPage> {
     if (color == Colors.green || color == Colors.orange) {
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) {
-          context.push(
-            '/infrastructure',
-            extra: {
-              'schoolCode': _schoolCode,
-              'schoolName': _schoolName,
-              'level': _schoolLevel,
-            },
-          );
+          // Debug log to check value before navigation
+          debugPrint('🔍 LeadershipPage - Navigating with firstAssessment: $_firstAssessment');
+
+          // Simple direct comparison - no default value needed
+          if (_firstAssessment == 'No') {
+            debugPrint('➡️ Navigating to classroom-1 (firstAssessment == No)');
+            // If first assessment is No, skip infrastructure and go directly to classroom-1
+            context.push(
+              '/classroom-1',
+              extra: {
+                'schoolCode': _schoolCode,
+                'schoolName': _schoolName,
+                'level': _schoolLevel,
+                'firstAssessment': _firstAssessment,
+              },
+            );
+          } else {
+            debugPrint('➡️ Navigating to infrastructure (firstAssessment == Yes or null)');
+            // Otherwise go to infrastructure as normal
+            context.push(
+              '/infrastructure',
+              extra: {
+                'schoolCode': _schoolCode,
+                'schoolName': _schoolName,
+                'level': _schoolLevel,
+                'firstAssessment': _firstAssessment,
+              },
+            );
+          }
         }
       });
     }

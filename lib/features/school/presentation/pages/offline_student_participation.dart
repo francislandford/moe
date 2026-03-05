@@ -38,9 +38,7 @@ class _OfflineStudentParticipationPageState extends State<OfflineStudentParticip
       );
       return;
     }
-
     setState(() => _isSyncing = true);
-
     final auth = Provider.of<AuthProvider>(context, listen: false);
     if (!auth.isAuthenticated || auth.token == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -49,15 +47,10 @@ class _OfflineStudentParticipationPageState extends State<OfflineStudentParticip
       setState(() => _isSyncing = false);
       return;
     }
-
     final headers = auth.getAuthHeaders();
-
     await StudentLocalStorageService.syncPending(headers);
-
     await _loadPending();
-
     setState(() => _isSyncing = false);
-
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Sync attempted'), backgroundColor: Colors.green),
     );
@@ -84,13 +77,33 @@ class _OfflineStudentParticipationPageState extends State<OfflineStudentParticip
         title: const Text('Offline Student Participation', style: TextStyle(color: Colors.white)),
         backgroundColor: AppColors.primary,
         actions: [
+          StreamBuilder<bool>(
+            stream: LocalStorageService.onlineStatusStream,
+            initialData: LocalStorageService.currentOnlineStatus,
+            builder: (context, snapshot) {
+              final bool isOnline = snapshot.data ?? true;
+              return Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: isOnline ? Colors.green : Colors.orange,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white, width: 1),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(isOnline ? Icons.wifi : Icons.wifi_off, color: Colors.white, size: 16),
+                    const SizedBox(width: 4),
+                    Text(isOnline ? 'Online' : 'Offline', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: _isSyncing
-                ? const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-            )
+                ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : const Icon(Icons.sync),
             onPressed: _isSyncing ? null : _syncAll,
             tooltip: 'Sync all',
@@ -99,10 +112,9 @@ class _OfflineStudentParticipationPageState extends State<OfflineStudentParticip
       ),
       body: StreamBuilder<bool>(
         stream: LocalStorageService.onlineStatusStream,
-        initialData: true,
+        initialData: LocalStorageService.currentOnlineStatus,
         builder: (context, snapshot) {
           final bool isOnline = snapshot.data ?? true;
-
           return Column(
             children: [
               if (!isOnline)
@@ -111,12 +123,11 @@ class _OfflineStudentParticipationPageState extends State<OfflineStudentParticip
                   color: Colors.orange.shade100,
                   padding: const EdgeInsets.all(12),
                   child: const Text(
-                    'Offline Mode — Sync disabled until connected',
+                    'You are offline. Sync buttons are disabled until connected.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.w600),
                   ),
                 ),
-
               Expanded(
                 child: _pending.isEmpty
                     ? Center(
@@ -125,15 +136,9 @@ class _OfflineStudentParticipationPageState extends State<OfflineStudentParticip
                     children: [
                       Icon(Icons.cloud_done_rounded, size: 90, color: Colors.green.shade300),
                       const SizedBox(height: 20),
-                      const Text(
-                        'No Pending Student Participation Entries',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
+                      const Text('No Pending Student Participation Entries', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 12),
-                      const Text(
-                        'All data synced or cleared.',
-                        style: TextStyle(color: Colors.grey, fontSize: 16),
-                      ),
+                      const Text('All data synced or cleared.', style: TextStyle(color: Colors.grey, fontSize: 16)),
                     ],
                   ),
                 )
@@ -147,11 +152,10 @@ class _OfflineStudentParticipationPageState extends State<OfflineStudentParticip
                       final school = item['school'] ?? 'N/A';
                       final queuedAt = _formatDate(item['queuedAt']);
                       final scoreCount = (item['scores'] as Map?)?.length ?? 0;
-
                       return Card(
                         margin: const EdgeInsets.only(bottom: 12),
                         child: ListTile(
-                          leading: const Icon(Icons.cloud_upload, color: Colors.orange),
+                          leading: Icon(Icons.cloud_upload, color: isOnline ? Colors.orange : Colors.grey),
                           title: Text('School: $school'),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -162,7 +166,7 @@ class _OfflineStudentParticipationPageState extends State<OfflineStudentParticip
                           ),
                           trailing: IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () => _deleteItem(item),
+                            onPressed: _isSyncing ? null : () => _deleteItem(item),
                           ),
                         ),
                       );
@@ -177,20 +181,17 @@ class _OfflineStudentParticipationPageState extends State<OfflineStudentParticip
       floatingActionButton: _pending.isNotEmpty
           ? StreamBuilder<bool>(
         stream: LocalStorageService.onlineStatusStream,
-        initialData: true,
+        initialData: LocalStorageService.currentOnlineStatus,
         builder: (context, snapshot) {
-          final bool isOnline = snapshot.data ?? false;
+          final bool isOnline = snapshot.data ?? true;
           return FloatingActionButton.extended(
             heroTag: 'sync_all_student',
-            onPressed: _isSyncing || !isOnline ? null : _syncAll,
-            backgroundColor: _isSyncing || !isOnline ? Colors.grey : AppColors.primary,
+            onPressed: (isOnline && !_isSyncing) ? _syncAll : null,
+            backgroundColor: (isOnline && !_isSyncing) ? AppColors.primary : Colors.grey,
             icon: _isSyncing
                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
                 : const Icon(Icons.sync_rounded, color: Colors.white),
-            label: Text(
-              _isSyncing ? 'Syncing...' : 'Sync All (${_pending.length})',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-            ),
+            label: Text(_isSyncing ? 'Syncing...' : 'Sync All (${_pending.length})', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
             tooltip: isOnline ? 'Sync all pending' : 'Offline - connect to sync',
           );
         },

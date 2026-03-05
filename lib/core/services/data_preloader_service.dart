@@ -216,16 +216,56 @@ class DataPreloaderService {
     }
   }
 
+// In your DataPreloaderService.dart, update the _preloadUserData method:
+
+// In your DataPreloaderService.dart, update ONLY the _preloadUserData method:
+
   static Future<void> _preloadUserData(Map<String, String> headers, String token, int userId) async {
     try {
+      debugPrint('🔄 Starting user data preload...');
+
+      // Preload users list - this is the key for offline login
+      final usersResponse = await http.get(
+        Uri.parse('${AppUrl.url}/users'),
+        headers: headers,
+      );
+
+      if (usersResponse.statusCode == 200) {
+        final data = jsonDecode(usersResponse.body);
+        final usersList = _extractListFromResponse(data);
+
+        if (usersList.isNotEmpty) {
+          await LocalStorageService.saveToCache('users', usersList);
+          debugPrint('✅ Users data preloaded and cached: ${usersList.length} users');
+
+          // Log first user structure for debugging (without password)
+          if (usersList.isNotEmpty) {
+            final firstUser = usersList.first as Map;
+            debugPrint('Sample user keys: ${firstUser.keys}');
+            if (firstUser.containsKey('email')) {
+              debugPrint('Sample user email: ${firstUser['email']}');
+            }
+          }
+        } else {
+          debugPrint('⚠️ Users list is empty');
+        }
+      } else {
+        debugPrint('❌ Failed to fetch users: ${usersResponse.statusCode}');
+      }
+
+      // Load other user data in parallel
       await Future.wait([
         _fetchAndCache('${AppUrl.url}/my-schools', headers, 'my_schools'),
         _fetchUserCounty(headers),
       ]);
+
+      debugPrint('✅ User data preload completed');
+
     } catch (e) {
-      debugPrint('User data preload error: $e');
+      debugPrint('❌ User data preload error: $e');
     }
   }
+
 
   static Future<void> _preloadQuestions(Map<String, String> headers) async {
     final categories = [
@@ -304,22 +344,52 @@ class DataPreloaderService {
   }
 
   static List<dynamic> _extractListFromResponse(dynamic data) {
-    if (data is List) return data;
-    if (data is Map && data.containsKey('data') && data['data'] is List) {
-      return data['data'];
+    debugPrint('Response data type: ${data.runtimeType}');
+
+    if (data is List) {
+      debugPrint('✅ Data is direct List with ${data.length} items');
+      return data;
     }
+
+    if (data is Map) {
+      debugPrint('🔍 Data is Map with keys: ${data.keys}');
+
+      // Check for common API response structures
+      if (data.containsKey('data') && data['data'] is List) {
+        debugPrint('✅ Found data["data"] list with ${data['data'].length} items');
+        return data['data'];
+      }
+
+      if (data.containsKey('users') && data['users'] is List) {
+        debugPrint('✅ Found data["users"] list with ${data['users'].length} items');
+        return data['users'];
+      }
+
+      if (data.containsKey('results') && data['results'] is List) {
+        debugPrint('✅ Found data["results"] list with ${data['results'].length} items');
+        return data['results'];
+      }
+    }
+
+    debugPrint('❌ Unexpected response format: $data');
     return [];
   }
 
-  // Public methods for accessing cached data
+  // FIXED: Public methods for accessing cached data with proper type casting
   static List<Map<String, dynamic>> getCachedData(String cacheKey) {
     try {
       final data = LocalStorageService.getFromCache(cacheKey);
       if (data != null && data is List) {
-        return List<Map<String, dynamic>>.from(data);
+        return data.map((item) {
+          if (item is Map) {
+            // Safely convert Map<dynamic, dynamic> to Map<String, dynamic>
+            return Map<String, dynamic>.from(item);
+          }
+          return <String, dynamic>{};
+        }).toList();
       }
     } catch (e) {
-      debugPrint('Error getting cached data: $e');
+      debugPrint('Error getting cached data for $cacheKey: $e');
     }
     return [];
   }

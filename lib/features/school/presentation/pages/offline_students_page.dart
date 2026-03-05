@@ -3,7 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:hive/hive.dart';
 import 'package:moe/core/widgets/custom_app_bar.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart'; // for nice date formatting
+import 'package:intl/intl.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/services/local_storage_service.dart';
 import '../../../../core/widgets/loading_overlay.dart';
@@ -53,15 +53,12 @@ class _OfflineStudentsPageState extends State<OfflineStudentsPage> {
 
     for (var school in pendingCopy) {
       try {
-        // Optional: Check if school_code already exists on server
-        // (You'd need a GET /schools?code=... endpoint - skip for now if not available)
         final result = await provider.createSchool(school, context);
 
         if (result['success'] == true && result['offline'] != true) {
           successCount++;
           await _removeFromPending(school);
         } else if (result['message']?.contains('already exists') ?? false) {
-          // If server says duplicate, remove from pending
           skippedCount++;
           await _removeFromPending(school);
         }
@@ -94,7 +91,6 @@ class _OfflineStudentsPageState extends State<OfflineStudentsPage> {
   Future<void> _removeFromPending(Map<String, dynamic> schoolToRemove) async {
     final currentPending = LocalStorageService.getPendingSchools();
     final updated = currentPending.where((s) {
-      // Use school_code as unique identifier (adjust if needed)
       return s['school_code'] != schoolToRemove['school_code'];
     }).toList();
 
@@ -131,19 +127,85 @@ class _OfflineStudentsPageState extends State<OfflineStudentsPage> {
     }
   }
 
+  Future<void> _syncSingleSchool(Map<String, dynamic> school) async {
+    if (!await LocalStorageService.isOnline()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No internet connection. Connect and try again.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSyncing = true);
+
+    final provider = Provider.of<SchoolProvider>(context, listen: false);
+    final result = await provider.createSchool(school, context);
+
+    if (result['success'] == true && result['offline'] != true) {
+      await _removeFromPending(school);
+      await _loadPendingSchools();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Synced successfully'), backgroundColor: Colors.green),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sync failed'), backgroundColor: Colors.orange),
+      );
+    }
+
+    setState(() => _isSyncing = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: CustomAppBar(title: 'Offline Registrations',
+      appBar: CustomAppBar(
+        title: 'Offline Registrations',
         backgroundColor: AppColors.primary,
         leading: IconButton(
           icon: const Icon(Icons.home, color: Colors.white),
           tooltip: 'Back to Home',
-          onPressed: () => context.pop()
-
-          ,
+          onPressed: () => context.pop(),
         ),
         actions: [
+          // Online/Offline Indicator
+          StreamBuilder<bool>(
+            stream: LocalStorageService.onlineStatusStream,
+            initialData: LocalStorageService.currentOnlineStatus, // FIXED: Use current status
+            builder: (context, snapshot) {
+              final bool isOnline = snapshot.data ?? true;
+              return Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: isOnline ? Colors.green : Colors.orange,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white, width: 1),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isOnline ? Icons.wifi : Icons.wifi_off,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      isOnline ? 'Online' : 'Offline',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
             tooltip: 'Refresh list',
@@ -151,10 +213,11 @@ class _OfflineStudentsPageState extends State<OfflineStudentsPage> {
           ),
         ],
       ),
-      body: FutureBuilder<bool>(
-        future: LocalStorageService.isOnline(),
+      body: StreamBuilder<bool>(
+        stream: LocalStorageService.onlineStatusStream,
+        initialData: LocalStorageService.currentOnlineStatus, // FIXED: Use current status
         builder: (context, snapshot) {
-          final bool isOnline = snapshot.data ?? false;
+          final bool isOnline = snapshot.data ?? true;
 
           return Column(
             children: [
@@ -241,29 +304,18 @@ class _OfflineStudentsPageState extends State<OfflineStudentsPage> {
                               IconButton(
                                 icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
                                 tooltip: 'Delete this pending entry',
-                                onPressed: () => _deletePending(index),
+                                onPressed: _isSyncing ? null : () => _deletePending(index),
                               ),
                               IconButton(
-                                icon: const Icon(Icons.sync_rounded, color: AppColors.primary),
-                                tooltip: isOnline ? 'Sync now' : 'Offline - connect to sync',
-                                onPressed: isOnline
-                                    ? () async {
-                                  setState(() => _isSyncing = true);
-                                  final provider = Provider.of<SchoolProvider>(context, listen: false);
-                                  final result = await provider.createSchool(school, context);
-                                  if (result['success'] == true && result['offline'] != true) {
-                                    await _removeFromPending(school);
-                                    await _loadPendingSchools();
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Synced successfully'), backgroundColor: Colors.green),
-                                    );
-                                  } else {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Sync failed'), backgroundColor: Colors.orange),
-                                    );
-                                  }
-                                  setState(() => _isSyncing = false);
-                                }
+                                icon: Icon(
+                                  Icons.sync_rounded,
+                                  color: isOnline ? AppColors.primary : Colors.grey,
+                                ),
+                                tooltip: isOnline
+                                    ? 'Sync now'
+                                    : 'Offline - connect to sync',
+                                onPressed: (isOnline && !_isSyncing)
+                                    ? () => _syncSingleSchool(school)
                                     : null,
                               ),
                             ],
@@ -279,15 +331,16 @@ class _OfflineStudentsPageState extends State<OfflineStudentsPage> {
         },
       ),
       floatingActionButton: _pendingSchools.isNotEmpty
-          ? FutureBuilder<bool>(
-        future: LocalStorageService.isOnline(),
+          ? StreamBuilder<bool>(
+        stream: LocalStorageService.onlineStatusStream,
+        initialData: LocalStorageService.currentOnlineStatus, // FIXED: Use current status
         builder: (context, snapshot) {
-          final bool canSync = snapshot.data ?? false;
+          final bool isOnline = snapshot.data ?? true;
 
           return FloatingActionButton.extended(
             heroTag: 'sync_all',
-            onPressed: canSync && !_isSyncing ? _syncAll : null,
-            backgroundColor: canSync ? AppColors.primary : Colors.grey,
+            onPressed: (isOnline && !_isSyncing) ? _syncAll : null,
+            backgroundColor: isOnline ? AppColors.primary : Colors.grey,
             icon: _isSyncing
                 ? const SizedBox(
               width: 20,

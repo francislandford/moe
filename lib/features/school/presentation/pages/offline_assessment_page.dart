@@ -84,7 +84,35 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
     }
   }
 
-  /// Syncs ONE queued assessment — submits ALL sections
+  Future<void> _syncSingleAssessmentFromCard(Map<String, dynamic> assessment) async {
+    if (!await LocalStorageService.isOnline()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No internet connection. Connect and try again.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSyncing = true);
+    final success = await _syncSingleAssessment(assessment, context);
+
+    if (success) {
+      await _removeFromPending(assessment);
+      await _loadPendingAssessments();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Synced successfully'), backgroundColor: Colors.green),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sync failed'), backgroundColor: Colors.orange),
+      );
+    }
+
+    setState(() => _isSyncing = false);
+  }
+
   Future<bool> _syncSingleAssessment(Map<String, dynamic> assessment, BuildContext context) async {
     final auth = Provider.of<AuthProvider>(context, listen: false);
     if (!auth.isAuthenticated || auth.token == null) {
@@ -103,69 +131,47 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
     debugPrint('Syncing assessment for school: $school (queued: ${assessment['queuedAt']})');
 
     try {
-      // 1. Absent records
       for (var r in assessment['absentRecords'] ?? []) {
         final res = await http.post(
           Uri.parse('${AppUrl.url}/schools/absents'),
           headers: headers,
-          body: jsonEncode({
-            ...r,
-            'school': school,
-          }),
+          body: jsonEncode({...r, 'school': school}),
         );
-        debugPrint('Absent sync: ${res.statusCode}');
         if (res.statusCode != 201) throw 'Absent failed: ${res.body}';
       }
 
-      // 2. Staff records
       for (var r in assessment['staffRecords'] ?? []) {
         final res = await http.post(
           Uri.parse('${AppUrl.url}/schools/staff'),
           headers: headers,
-          body: jsonEncode({
-            ...r,
-            'school': school,
-          }),
+          body: jsonEncode({...r, 'school': school}),
         );
-        debugPrint('Staff sync: ${res.statusCode}');
         if (res.statusCode != 201) throw 'Staff failed: ${res.body}';
       }
 
-      // 3. Required Teachers (only if data exists)
       final req = assessment['reqTeachers'] ?? {};
       if ((req['level'] ?? '').toString().trim().isNotEmpty) {
         final res = await http.post(
           Uri.parse('${AppUrl.url}/schools/req-teachers'),
           headers: headers,
-          body: jsonEncode({
-            ...req,
-            'school': school,
-          }),
+          body: jsonEncode({...req, 'school': school}),
         );
-        debugPrint('Req-teachers sync: ${res.statusCode}');
         if (res.statusCode != 201) throw 'Req-teachers failed: ${res.body}';
       }
 
-      // 4. Legacy Verify Students (single record - kept for backward compatibility)
       final verifyLegacy = assessment['verifyStudents'] ?? {};
       if ((verifyLegacy['class'] ?? '').toString().trim().isNotEmpty) {
         final res = await http.post(
           Uri.parse('${AppUrl.url}/schools/verify-students'),
           headers: headers,
-          body: jsonEncode({
-            ...verifyLegacy,
-            'school': school,
-          }),
+          body: jsonEncode({...verifyLegacy, 'school': school}),
         );
-        debugPrint('Legacy verify-students sync: ${res.statusCode}');
         if (res.statusCode != 201) throw 'Legacy verify-students failed: ${res.body}';
       }
 
-      // 5. NEW: Verify Student Records (tabular format - multiple grades)
       for (var record in assessment['verifyStudentRecords'] ?? []) {
         final gradeName = record['classGrade']?.toString() ?? '';
         if (gradeName.isEmpty) continue;
-
         final payload = {
           'school': school,
           'classes': gradeName,
@@ -174,27 +180,20 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
           'emis_female': int.tryParse(record['emisFemale']?.toString() ?? '0') ?? 0,
           'count_female': int.tryParse(record['countFemale']?.toString() ?? '0') ?? 0,
         };
-
         final res = await http.post(
           Uri.parse('${AppUrl.url}/schools/verify-students'),
           headers: headers,
           body: jsonEncode(payload),
         );
-        debugPrint('Verify-student row sync for $gradeName: ${res.statusCode}');
         if (res.statusCode != 201) throw 'Verify-student row failed: ${res.body}';
       }
 
-      // 6. Fee records
       for (var r in assessment['feeRecords'] ?? []) {
         final res = await http.post(
           Uri.parse('${AppUrl.url}/schools/fees-paid'),
           headers: headers,
-          body: jsonEncode({
-            ...r,
-            'school': school,
-          }),
+          body: jsonEncode({...r, 'school': school}),
         );
-        debugPrint('Fees sync: ${res.statusCode}');
         if (res.statusCode != 201) throw 'Fees failed: ${res.body}';
       }
 
@@ -208,16 +207,10 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
 
   Future<void> _removeFromPending(Map<String, dynamic> assessmentToRemove) async {
     final current = LocalStorageService.getPendingAssessments();
-    final updated = current.where((a) {
-      return a['queuedAt'] != assessmentToRemove['queuedAt'];
-    }).toList();
-
+    final updated = current.where((a) => a['queuedAt'] != assessmentToRemove['queuedAt']).toList();
     final box = Hive.box(LocalStorageService.pendingAssessmentsBox);
     await box.put('pending', updated);
-
-    setState(() {
-      _pendingAssessments = updated;
-    });
+    setState(() => _pendingAssessments = updated);
   }
 
   Future<void> _deletePending(int index) async {
@@ -257,6 +250,30 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
           onPressed: () => context.pop(),
         ),
         actions: [
+          StreamBuilder<bool>(
+            stream: LocalStorageService.onlineStatusStream,
+            initialData: LocalStorageService.currentOnlineStatus,
+            builder: (context, snapshot) {
+              final bool isOnline = snapshot.data ?? true;
+              return Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: isOnline ? Colors.green : Colors.orange,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white, width: 1),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(isOnline ? Icons.wifi : Icons.wifi_off, color: Colors.white, size: 16),
+                    const SizedBox(width: 4),
+                    Text(isOnline ? 'Online' : 'Offline', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
             tooltip: 'Refresh list',
@@ -266,10 +283,9 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
       ),
       body: StreamBuilder<bool>(
         stream: LocalStorageService.onlineStatusStream,
-        initialData: true,
+        initialData: LocalStorageService.currentOnlineStatus,
         builder: (context, snapshot) {
           final bool isOnline = snapshot.data ?? true;
-
           return Column(
             children: [
               if (!isOnline)
@@ -278,12 +294,11 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
                   color: Colors.orange.shade100,
                   padding: const EdgeInsets.all(12),
                   child: const Text(
-                    'Offline Mode — Sync buttons disabled until connected',
+                    'You are offline. Sync buttons are disabled until connected.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.w600),
                   ),
                 ),
-
               Expanded(
                 child: _pendingAssessments.isEmpty
                     ? Center(
@@ -292,15 +307,9 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
                     children: [
                       Icon(Icons.cloud_done_rounded, size: 90, color: Colors.green.shade300),
                       const SizedBox(height: 20),
-                      const Text(
-                        'No Pending Assessments',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
+                      const Text('No Pending Assessments', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 12),
-                      const Text(
-                        'All assessments have been synced or cleared.',
-                        style: TextStyle(color: Colors.grey, fontSize: 16),
-                      ),
+                      const Text('All assessments have been synced or cleared.', style: TextStyle(color: Colors.grey, fontSize: 16)),
                     ],
                   ),
                 )
@@ -314,12 +323,10 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
                       final date = assessment['queuedAt'] != null
                           ? DateFormat('dd MMM yyyy, HH:mm').format(DateTime.parse(assessment['queuedAt']))
                           : 'Unknown date';
-
                       final absentCount = (assessment['absentRecords'] as List?)?.length ?? 0;
                       final staffCount = (assessment['staffRecords'] as List?)?.length ?? 0;
                       final feeCount = (assessment['feeRecords'] as List?)?.length ?? 0;
                       final verifyCount = (assessment['verifyStudentRecords'] as List?)?.length ?? 0;
-
                       return Card(
                         margin: const EdgeInsets.only(bottom: 16),
                         elevation: 3,
@@ -331,10 +338,7 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
                             backgroundColor: AppColors.primary.withOpacity(0.15),
                             child: Icon(Icons.assessment_rounded, color: AppColors.primary, size: 32),
                           ),
-                          title: Text(
-                            assessment['schoolName'] ?? 'Unnamed School',
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
-                          ),
+                          title: Text(assessment['schoolName'] ?? 'Unnamed School', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
                           subtitle: Padding(
                             padding: const EdgeInsets.only(top: 6),
                             child: Column(
@@ -343,10 +347,7 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
                                 Text('Code: ${assessment['schoolCode'] ?? 'N/A'}', style: const TextStyle(fontSize: 14)),
                                 Text('Queued: $date', style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
                                 const SizedBox(height: 4),
-                                Text(
-                                  'Data: $absentCount absent • $staffCount staff • $feeCount fees • $verifyCount verify',
-                                  style: const TextStyle(fontSize: 13, color: Colors.grey),
-                                ),
+                                Text('Data: $absentCount absent • $staffCount staff • $feeCount fees • $verifyCount verify', style: const TextStyle(fontSize: 13, color: Colors.grey)),
                               ],
                             ),
                           ),
@@ -356,29 +357,12 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
                               IconButton(
                                 icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
                                 tooltip: 'Delete this pending assessment',
-                                onPressed: () => _deletePending(index),
+                                onPressed: _isSyncing ? null : () => _deletePending(index),
                               ),
                               IconButton(
-                                icon: const Icon(Icons.sync_rounded, color: AppColors.primary),
+                                icon: Icon(Icons.sync_rounded, color: isOnline ? AppColors.primary : Colors.grey),
                                 tooltip: isOnline ? 'Sync now' : 'Offline - connect to sync',
-                                onPressed: isOnline
-                                    ? () async {
-                                  setState(() => _isSyncing = true);
-                                  final success = await _syncSingleAssessment(assessment, context);
-                                  if (success) {
-                                    await _removeFromPending(assessment);
-                                    await _loadPendingAssessments();
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Synced successfully'), backgroundColor: Colors.green),
-                                    );
-                                  } else {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Sync failed'), backgroundColor: Colors.orange),
-                                    );
-                                  }
-                                  setState(() => _isSyncing = false);
-                                }
-                                    : null,
+                                onPressed: (isOnline && !_isSyncing) ? () => _syncSingleAssessmentFromCard(assessment) : null,
                               ),
                             ],
                           ),
@@ -395,25 +379,17 @@ class _OfflineAssessmentsPageState extends State<OfflineAssessmentsPage> {
       floatingActionButton: _pendingAssessments.isNotEmpty
           ? StreamBuilder<bool>(
         stream: LocalStorageService.onlineStatusStream,
-        initialData: true,
+        initialData: LocalStorageService.currentOnlineStatus,
         builder: (context, snapshot) {
-          final bool canSync = snapshot.data ?? false;
-
+          final bool isOnline = snapshot.data ?? true;
           return FloatingActionButton.extended(
             heroTag: 'sync_all_assessments',
-            onPressed: canSync && !_isSyncing ? _syncAll : null,
-            backgroundColor: canSync ? AppColors.primary : Colors.grey,
+            onPressed: (isOnline && !_isSyncing) ? _syncAll : null,
+            backgroundColor: isOnline ? AppColors.primary : Colors.grey,
             icon: _isSyncing
-                ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
-            )
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
                 : const Icon(Icons.sync_rounded, color: Colors.white),
-            label: Text(
-              _isSyncing ? 'Syncing...' : 'Sync All (${_pendingAssessments.length})',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-            ),
+            label: Text(_isSyncing ? 'Syncing...' : 'Sync All (${_pendingAssessments.length})', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
           );
         },
       )

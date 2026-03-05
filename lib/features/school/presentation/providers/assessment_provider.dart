@@ -15,8 +15,7 @@ class AssessmentProvider with ChangeNotifier {
   String level = 'ECE';
 
   // Dynamic lists
-  List<Map<String, dynamic>> absentRecords = [];
-  List<Map<String, dynamic>> staffRecords = [];
+  List<Map<String, dynamic>> staffRecords = []; // Now includes excuse and reason
   List<Map<String, dynamic>> feeRecords = [];
   List<Map<String, dynamic>> verifyStudentRecords = [];
 
@@ -34,6 +33,10 @@ class AssessmentProvider with ChangeNotifier {
   String countMale = '';
   String emisFemale = '';
   String countFemale = '';
+
+  // Verification fields
+  String teachersPresent = 'Yes';
+  String verifyComment = '';
 
   // Grades from DataPreloaderService
   List<Map<String, dynamic>> gradesForLevel = [];
@@ -64,25 +67,12 @@ class AssessmentProvider with ChangeNotifier {
 
   int get pendingCount => LocalStorageService.getPendingAssessments().length;
 
+  // Helper method to check success status codes
+  bool _isSuccessStatusCode(int statusCode) {
+    return statusCode == 200 || statusCode == 201;
+  }
+
   // ─── Add / Remove / Update Methods ──────────────────────────────────────────
-  void addAbsent() {
-    absentRecords.add({
-      'fname': TextEditingController(),
-      'bio_id': TextEditingController(),
-      'pay_id': TextEditingController(),
-      'reason': TextEditingController(),
-      'excuse': 'Yes',
-    });
-    notifyListeners();
-  }
-
-  void removeAbsent(int index) {
-    if (index >= 0 && index < absentRecords.length) {
-      absentRecords.removeAt(index);
-      notifyListeners();
-    }
-  }
-
   void addStaff() {
     staffRecords.add({
       'fname': TextEditingController(),
@@ -90,6 +80,8 @@ class AssessmentProvider with ChangeNotifier {
       'position': TextEditingController(),
       'week_load': TextEditingController(),
       'present': 'Yes',
+      'excuse': 'Yes', // Added excuse field
+      'reason': TextEditingController(), // Added reason field
       'bio_id': TextEditingController(),
       'pay_id': TextEditingController(),
       'qualification': TextEditingController(),
@@ -400,56 +392,37 @@ class AssessmentProvider with ChangeNotifier {
         // Track if any submission fails
         bool hasFailure = false;
 
-        // 1. Submit Absent Teachers (optional - no validation)
-        for (var r in absentRecords) {
-          // Only submit if there's data
-          if (r['fname'].text.trim().isNotEmpty) {
-            try {
-              final res = await http.post(
-                Uri.parse('${AppUrl.url}/schools/absents'),
-                headers: headers,
-                body: jsonEncode({
-                  'school': schoolCode.trim(),
-                  'fname': r['fname'].text.trim(),
-                  'bio_id': r['bio_id'].text.trim(),
-                  'pay_id': r['pay_id'].text.trim(),
-                  'reason': r['reason'].text.trim(),
-                  'excuse': r['excuse'],
-                }),
-              );
-              debugPrint('Absent submission: ${res.statusCode}');
-              if (res.statusCode != 201) {
-                debugPrint('Absent failed: ${res.statusCode} - ${res.body}');
-                hasFailure = true;
-              }
-            } catch (e, stack) {
-              debugPrint('Absent submission error: $e');
-              debugPrint('Stack: $stack');
-              hasFailure = true;
-            }
-          }
-        }
-
-        // 2. Submit Staff Records
+        // 1. Submit Staff Records (now includes excuse and reason)
         for (var r in staffRecords) {
           try {
+            // Only include excuse and reason if present is 'No'
+            final payload = {
+              'school': schoolCode.trim(),
+              'fname': r['fname'].text.trim(),
+              'gender': r['gender'],
+              'position': r['position'].text.trim(),
+              'week_load': int.tryParse(r['week_load'].text.trim() ?? '0') ?? 0,
+              'present': r['present'],
+              'bio_id': r['bio_id'].text.trim(),
+              'pay_id': r['pay_id'].text.trim(),
+              'qualification': r['qualification'].text.trim(),
+            };
+
+            // Add excuse and reason only if present is 'No'
+            if (r['present'] == 'No') {
+              payload['excuse'] = r['excuse'] ?? 'Yes';
+              payload['reason'] = r['reason']?.text.trim() ?? '';
+            }
+
+            debugPrint('Staff submission payload: ${jsonEncode(payload)}');
+
             final res = await http.post(
               Uri.parse('${AppUrl.url}/schools/staff'),
               headers: headers,
-              body: jsonEncode({
-                'school': schoolCode.trim(),
-                'fname': r['fname'].text.trim(),
-                'gender': r['gender'],
-                'position': r['position'].text.trim(),
-                'week_load': int.tryParse(r['week_load'].text.trim() ?? '0') ?? 0,
-                'present': r['present'],
-                'bio_id': r['bio_id'].text.trim(),
-                'pay_id': r['pay_id'].text.trim(),
-                'qualification': r['qualification'].text.trim(),
-              }),
+              body: jsonEncode(payload),
             );
             debugPrint('Staff submission: ${res.statusCode}');
-            if (res.statusCode != 201) {
+            if (!_isSuccessStatusCode(res.statusCode)) {
               debugPrint('Staff failed: ${res.statusCode} - ${res.body}');
               hasFailure = true;
             }
@@ -460,7 +433,7 @@ class AssessmentProvider with ChangeNotifier {
           }
         }
 
-        // 3. Submit Required Teachers
+        // 2. Submit Required Teachers
         if (reqLevel.trim().isNotEmpty) {
           try {
             final payload = {
@@ -483,7 +456,7 @@ class AssessmentProvider with ChangeNotifier {
 
             debugPrint('Req Teachers response: ${res.statusCode} - ${res.body}');
 
-            if (res.statusCode != 201) {
+            if (!_isSuccessStatusCode(res.statusCode)) {
               debugPrint('Req Teachers failed: ${res.statusCode} - ${res.body}');
               hasFailure = true;
             }
@@ -496,7 +469,7 @@ class AssessmentProvider with ChangeNotifier {
           debugPrint('Skipping req-teachers submission: reqLevel is empty');
         }
 
-        // 4. Submit Verify Students - Using tabular records
+        // 3. Submit Verify Students - Using tabular records
         for (var record in _verifyStudentRecordsByGrade.values) {
           try {
             final gradeName = record['classGrade']?.toString() ?? '';
@@ -521,7 +494,7 @@ class AssessmentProvider with ChangeNotifier {
 
             debugPrint('Verify row response: ${res.statusCode} - ${res.body}');
 
-            if (res.statusCode != 201) {
+            if (!_isSuccessStatusCode(res.statusCode)) {
               debugPrint('Verify row failed: ${res.statusCode} - ${res.body}');
               hasFailure = true;
             }
@@ -532,7 +505,7 @@ class AssessmentProvider with ChangeNotifier {
           }
         }
 
-        // 5. Submit Fees - Using tabular fee records
+        // 4. Submit Fees - Using tabular fee records
         for (var record in _feeRecordsByType.values) {
           try {
             final amount = double.tryParse(record['amount'].text.trim() ?? '0') ?? 0.0;
@@ -554,7 +527,7 @@ class AssessmentProvider with ChangeNotifier {
 
             debugPrint('Fee submission response: ${res.statusCode}');
 
-            if (res.statusCode != 201) {
+            if (!_isSuccessStatusCode(res.statusCode)) {
               debugPrint('Fee failed: ${res.statusCode} - ${res.body}');
               hasFailure = true;
             }
@@ -563,6 +536,34 @@ class AssessmentProvider with ChangeNotifier {
             debugPrint('Stack: $stack');
             hasFailure = true;
           }
+        }
+
+        // 5. Submit Verification Data
+        try {
+          final payload = {
+            'school': schoolCode.trim(),
+            'teachers_present': teachersPresent,
+            'verify_comment': verifyComment.trim(),
+          };
+
+          debugPrint('Sending verification data: ${jsonEncode(payload)}');
+
+          final res = await http.post(
+            Uri.parse('${AppUrl.url}/schools/verification'),
+            headers: headers,
+            body: jsonEncode(payload),
+          );
+
+          debugPrint('Verification submission response: ${res.statusCode}');
+
+          if (!_isSuccessStatusCode(res.statusCode)) {
+            debugPrint('Verification failed: ${res.statusCode} - ${res.body}');
+            hasFailure = true;
+          }
+        } catch (e, stack) {
+          debugPrint('Verification submission error: $e');
+          debugPrint('Stack: $stack');
+          hasFailure = true;
         }
 
         // If any failures occurred, save to pending for retry
@@ -604,19 +605,14 @@ class AssessmentProvider with ChangeNotifier {
       'schoolName': schoolName,
       'schoolCode': schoolCode,
       'level': level,
-      'absentRecords': absentRecords.map((r) => {
-        'fname': r['fname'].text.trim(),
-        'bio_id': r['bio_id'].text.trim(),
-        'pay_id': r['pay_id'].text.trim(),
-        'reason': r['reason'].text.trim(),
-        'excuse': r['excuse'],
-      }).toList(),
       'staffRecords': staffRecords.map((r) => {
         'fname': r['fname'].text.trim(),
         'gender': r['gender'],
         'position': r['position'].text.trim(),
         'week_load': r['week_load'].text.trim(),
         'present': r['present'],
+        'excuse': r['present'] == 'No' ? r['excuse'] : null,
+        'reason': r['present'] == 'No' ? r['reason']?.text.trim() : null,
         'bio_id': r['bio_id'].text.trim(),
         'pay_id': r['pay_id'].text.trim(),
         'qualification': r['qualification'].text.trim(),
@@ -652,6 +648,11 @@ class AssessmentProvider with ChangeNotifier {
         'purpose': r['purpose'].text.trim(),
         'amount': r['amount'].text.trim(),
       }).toList(),
+      // Verification data
+      'verification': {
+        'teachers_present': teachersPresent,
+        'verify_comment': verifyComment.trim(),
+      },
       'queuedAt': DateTime.now().toIso8601String(),
     };
   }
@@ -681,40 +682,39 @@ class AssessmentProvider with ChangeNotifier {
         final school = assessment['schoolCode'] ?? assessment['schoolName'] ?? 'unknown';
         bool hasFailure = false;
 
-        // Absent
-        for (var r in assessment['absentRecords'] ?? []) {
-          try {
-            final res = await http.post(
-              Uri.parse('${AppUrl.url}/schools/absents'),
-              headers: headers,
-              body: jsonEncode({
-                ...r,
-                'school': school,
-              }),
-            );
-            if (res.statusCode != 201) {
-              debugPrint('Pending absent sync failed: ${res.body}');
-              hasFailure = true;
-            }
-          } catch (e) {
-            debugPrint('Pending absent sync error: $e');
-            hasFailure = true;
-          }
-        }
+        debugPrint('Syncing assessment for school: $school (queued: ${assessment['queuedAt']})');
 
-        // Staff
+        // Staff (now includes excuse and reason)
         for (var r in assessment['staffRecords'] ?? []) {
           try {
+            final payload = {
+              'school': school,
+              'fname': r['fname'],
+              'gender': r['gender'],
+              'position': r['position'],
+              'week_load': int.tryParse(r['week_load']?.toString() ?? '0') ?? 0,
+              'present': r['present'],
+              'bio_id': r['bio_id'],
+              'pay_id': r['pay_id'],
+              'qualification': r['qualification'],
+            };
+
+            // Add excuse and reason if present is 'No'
+            if (r['present'] == 'No') {
+              payload['excuse'] = r['excuse'] ?? 'Yes';
+              payload['reason'] = r['reason'] ?? '';
+            }
+
             final res = await http.post(
               Uri.parse('${AppUrl.url}/schools/staff'),
               headers: headers,
-              body: jsonEncode({
-                ...r,
-                'school': school,
-              }),
+              body: jsonEncode(payload),
             );
-            if (res.statusCode != 201) {
-              debugPrint('Pending staff sync failed: ${res.body}');
+
+            if (_isSuccessStatusCode(res.statusCode)) {
+              debugPrint('Staff sync: ${res.statusCode}');
+            } else {
+              debugPrint('Pending staff sync failed: ${res.statusCode} - ${res.body}');
               hasFailure = true;
             }
           } catch (e) {
@@ -737,7 +737,9 @@ class AssessmentProvider with ChangeNotifier {
               }),
             );
             debugPrint('Pending req-teachers response: ${res.statusCode} - ${res.body}');
-            if (res.statusCode != 201) {
+            if (_isSuccessStatusCode(res.statusCode)) {
+              debugPrint('Req-teachers sync: ${res.statusCode}');
+            } else {
               debugPrint('Pending req-teachers sync failed: ${res.body}');
               hasFailure = true;
             }
@@ -758,7 +760,10 @@ class AssessmentProvider with ChangeNotifier {
                 'school': school,
               }),
             );
-            if (res.statusCode != 201) {
+
+            if (_isSuccessStatusCode(res.statusCode)) {
+              debugPrint('Verify-student row sync for ${r['classGrade']}: ${res.statusCode}');
+            } else {
               debugPrint('Pending verify-student row sync failed: ${res.body}');
               hasFailure = true;
             }
@@ -768,7 +773,7 @@ class AssessmentProvider with ChangeNotifier {
           }
         }
 
-        // Fees
+        // Fees - FIXED: Properly handle 200 status code as success
         for (var r in assessment['feeRecords'] ?? []) {
           try {
             final res = await http.post(
@@ -779,8 +784,13 @@ class AssessmentProvider with ChangeNotifier {
                 'school': school,
               }),
             );
-            if (res.statusCode != 201) {
-              debugPrint('Pending fee sync failed: ${res.body}');
+
+            // Check if status code indicates success (200 or 201)
+            if (_isSuccessStatusCode(res.statusCode)) {
+              debugPrint('Fees sync: ${res.statusCode}');
+              // Success - continue to next fee record
+            } else {
+              debugPrint('Pending fee sync failed: ${res.statusCode} - ${res.body}');
               hasFailure = true;
             }
           } catch (e) {
@@ -789,14 +799,40 @@ class AssessmentProvider with ChangeNotifier {
           }
         }
 
+        // Sync Verification data
+        final verification = assessment['verification'];
+        if (verification != null) {
+          try {
+            final res = await http.post(
+              Uri.parse('${AppUrl.url}/schools/verification'),
+              headers: headers,
+              body: jsonEncode({
+                ...verification,
+                'school': school,
+              }),
+            );
+
+            if (_isSuccessStatusCode(res.statusCode)) {
+              debugPrint('Verification sync: ${res.statusCode}');
+            } else {
+              debugPrint('Pending verification sync failed: ${res.body}');
+              hasFailure = true;
+            }
+          } catch (e) {
+            debugPrint('Pending verification sync error: $e');
+            hasFailure = true;
+          }
+        }
+
         if (!hasFailure) {
           await LocalStorageService.removePendingAssessment(assessment);
-          debugPrint('Pending assessment synced and removed');
+          debugPrint('✅ Pending assessment synced and removed successfully');
         } else {
+          debugPrint('❌ Assessment sync had failures, keeping in pending queue');
           failedSyncs.add(assessment);
         }
       } catch (e, stack) {
-        debugPrint('Full pending assessment sync error: $e');
+        debugPrint('❌ Full pending assessment sync error: $e');
         debugPrint('Stack: $stack');
         failedSyncs.add(assessment);
       }
@@ -823,7 +859,6 @@ class AssessmentProvider with ChangeNotifier {
 
   // ─── Reset all data ───────────────────────────────────────────────────────
   void reset() {
-    absentRecords.clear();
     staffRecords.clear();
     feeRecords.clear();
     verifyStudentRecords.clear();
@@ -842,6 +877,8 @@ class AssessmentProvider with ChangeNotifier {
     countMale = '';
     emisFemale = '';
     countFemale = '';
+    teachersPresent = 'Yes';
+    verifyComment = '';
     gradesForLevel.clear();
     isLoadingGrades = false;
     _isLoadingPositions = false;
