@@ -15,7 +15,7 @@ class AssessmentProvider with ChangeNotifier {
   String level = 'ECE';
 
   // Dynamic lists
-  List<Map<String, dynamic>> staffRecords = []; // Now includes excuse and reason
+  List<Map<String, dynamic>> staffRecords = []; // Now includes excuse, reason, and status
   List<Map<String, dynamic>> feeRecords = [];
   List<Map<String, dynamic>> verifyStudentRecords = [];
 
@@ -77,6 +77,7 @@ class AssessmentProvider with ChangeNotifier {
     staffRecords.add({
       'fname': TextEditingController(),
       'gender': 'Male',
+      'status': 'Employed', // Added status field with default value
       'position': TextEditingController(),
       'week_load': TextEditingController(),
       'present': 'Yes',
@@ -392,7 +393,7 @@ class AssessmentProvider with ChangeNotifier {
         // Track if any submission fails
         bool hasFailure = false;
 
-        // 1. Submit Staff Records (now includes excuse and reason)
+        // 1. Submit Staff Records (now includes excuse, reason, and status)
         for (var r in staffRecords) {
           try {
             // Only include excuse and reason if present is 'No'
@@ -400,6 +401,7 @@ class AssessmentProvider with ChangeNotifier {
               'school': schoolCode.trim(),
               'fname': r['fname'].text.trim(),
               'gender': r['gender'],
+              'status': r['status'], // Added status field
               'position': r['position'].text.trim(),
               'week_load': int.tryParse(r['week_load'].text.trim() ?? '0') ?? 0,
               'present': r['present'],
@@ -434,40 +436,40 @@ class AssessmentProvider with ChangeNotifier {
         }
 
         // 2. Submit Required Teachers
-        if (reqLevel.trim().isNotEmpty) {
-          try {
-            final payload = {
-              'school': schoolCode.trim(),
-              'level': reqLevel.trim(),
-              'self_contain': reqSelfContain,
-              'ass_teacher': int.tryParse(reqAssTeacher.trim() ?? '0') ?? 0,
-              'volunteers': int.tryParse(reqVolunteers.trim() ?? '0') ?? 0,
-              'students': int.tryParse(reqStudents.trim() ?? '0') ?? 0,
-              'num_req': int.tryParse(reqNumRequired.trim() ?? '0') ?? 0,
-            };
-
-            debugPrint('Attempting req-teachers POST with payload: ${jsonEncode(payload)}');
-
-            final res = await http.post(
-              Uri.parse('${AppUrl.url}/schools/req-teachers'),
-              headers: headers,
-              body: jsonEncode(payload),
-            );
-
-            debugPrint('Req Teachers response: ${res.statusCode} - ${res.body}');
-
-            if (!_isSuccessStatusCode(res.statusCode)) {
-              debugPrint('Req Teachers failed: ${res.statusCode} - ${res.body}');
-              hasFailure = true;
-            }
-          } catch (e, stack) {
-            debugPrint('Req Teachers submission error: $e');
-            debugPrint('Stack: $stack');
-            hasFailure = true;
-          }
-        } else {
-          debugPrint('Skipping req-teachers submission: reqLevel is empty');
-        }
+        // if (reqLevel.trim().isNotEmpty) {
+        //   try {
+        //     final payload = {
+        //       'school': schoolCode.trim(),
+        //       'level': reqLevel.trim(),
+        //       'self_contain': reqSelfContain,
+        //       'ass_teacher': int.tryParse(reqAssTeacher.trim() ?? '0') ?? 0,
+        //       'volunteers': int.tryParse(reqVolunteers.trim() ?? '0') ?? 0,
+        //       'students': int.tryParse(reqStudents.trim() ?? '0') ?? 0,
+        //       'num_req': int.tryParse(reqNumRequired.trim() ?? '0') ?? 0,
+        //     };
+        //
+        //     debugPrint('Attempting req-teachers POST with payload: ${jsonEncode(payload)}');
+        //
+        //     final res = await http.post(
+        //       Uri.parse('${AppUrl.url}/schools/req-teachers'),
+        //       headers: headers,
+        //       body: jsonEncode(payload),
+        //     );
+        //
+        //     debugPrint('Req Teachers response: ${res.statusCode} - ${res.body}');
+        //
+        //     if (!_isSuccessStatusCode(res.statusCode)) {
+        //       debugPrint('Req Teachers failed: ${res.statusCode} - ${res.body}');
+        //       hasFailure = true;
+        //     }
+        //   } catch (e, stack) {
+        //     debugPrint('Req Teachers submission error: $e');
+        //     debugPrint('Stack: $stack');
+        //     hasFailure = true;
+        //   }
+        // } else {
+        //   debugPrint('Skipping req-teachers submission: reqLevel is empty');
+        // }
 
         // 3. Submit Verify Students - Using tabular records
         for (var record in _verifyStudentRecordsByGrade.values) {
@@ -506,37 +508,37 @@ class AssessmentProvider with ChangeNotifier {
         }
 
         // 4. Submit Fees - Using tabular fee records
-        for (var record in _feeRecordsByType.values) {
-          try {
-            final amount = double.tryParse(record['amount'].text.trim() ?? '0') ?? 0.0;
-            final payload = {
-              'school': schoolCode.trim(),
-              'fee': record['fee'],
-              'pay': record['pay'],
-              'purpose': record['purpose'].text.trim(),
-              'amount': amount,
-            };
-
-            debugPrint('Sending fee record: ${jsonEncode(payload)}');
-
-            final res = await http.post(
-              Uri.parse('${AppUrl.url}/schools/fees-paid'),
-              headers: headers,
-              body: jsonEncode(payload),
-            );
-
-            debugPrint('Fee submission response: ${res.statusCode}');
-
-            if (!_isSuccessStatusCode(res.statusCode)) {
-              debugPrint('Fee failed: ${res.statusCode} - ${res.body}');
-              hasFailure = true;
-            }
-          } catch (e, stack) {
-            debugPrint('Fee submission error: $e');
-            debugPrint('Stack: $stack');
-            hasFailure = true;
-          }
-        }
+        // for (var record in _feeRecordsByType.values) {
+        //   try {
+        //     final amount = double.tryParse(record['amount'].text.trim() ?? '0') ?? 0.0;
+        //     final payload = {
+        //       'school': schoolCode.trim(),
+        //       'fee': record['fee'],
+        //       'pay': record['pay'],
+        //       'purpose': record['purpose'].text.trim(),
+        //       'amount': amount,
+        //     };
+        //
+        //     debugPrint('Sending fee record: ${jsonEncode(payload)}');
+        //
+        //     final res = await http.post(
+        //       Uri.parse('${AppUrl.url}/schools/fees-paid'),
+        //       headers: headers,
+        //       body: jsonEncode(payload),
+        //     );
+        //
+        //     debugPrint('Fee submission response: ${res.statusCode}');
+        //
+        //     if (!_isSuccessStatusCode(res.statusCode)) {
+        //       debugPrint('Fee failed: ${res.statusCode} - ${res.body}');
+        //       hasFailure = true;
+        //     }
+        //   } catch (e, stack) {
+        //     debugPrint('Fee submission error: $e');
+        //     debugPrint('Stack: $stack');
+        //     hasFailure = true;
+        //   }
+        // }
 
         // 5. Submit Verification Data
         try {
@@ -608,6 +610,7 @@ class AssessmentProvider with ChangeNotifier {
       'staffRecords': staffRecords.map((r) => {
         'fname': r['fname'].text.trim(),
         'gender': r['gender'],
+        'status': r['status'], // Added status field
         'position': r['position'].text.trim(),
         'week_load': r['week_load'].text.trim(),
         'present': r['present'],
@@ -684,13 +687,14 @@ class AssessmentProvider with ChangeNotifier {
 
         debugPrint('Syncing assessment for school: $school (queued: ${assessment['queuedAt']})');
 
-        // Staff (now includes excuse and reason)
+        // Staff (now includes excuse, reason, and status)
         for (var r in assessment['staffRecords'] ?? []) {
           try {
             final payload = {
               'school': school,
               'fname': r['fname'],
               'gender': r['gender'],
+              'status': r['status'], // Added status field
               'position': r['position'],
               'week_load': int.tryParse(r['week_load']?.toString() ?? '0') ?? 0,
               'present': r['present'],

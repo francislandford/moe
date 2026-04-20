@@ -15,6 +15,7 @@ import '../features/auth/presentation/providers/auth_provider.dart';
 import '../features/onboarding/presentation/pages/onboarding_page.dart';
 
 // School Pages
+import '../features/school/presentation/pages/all_schools_submitted.dart';
 import '../features/school/presentation/pages/my_schools_page.dart';
 import '../features/school/presentation/pages/Profile.dart';
 import '../features/school/presentation/pages/about.dart';
@@ -367,69 +368,68 @@ GoRouter createRouter(AuthProvider authProvider) {
           ),
 
           // ─── Individual Classroom Routes ───
-          GoRoute(
-            path: '/classroom-1',
-            name: 'classroom-1',
-            pageBuilder: (context, state) => CustomTransitionPage(
-              key: state.pageKey,
-              child: Classroom1Page(
-                schoolCode: (state.extra as Map<String, dynamic>?)?['schoolCode'] as String?,
-                schoolName: (state.extra as Map<String, dynamic>?)?['schoolName'] as String?,
-                schoolLevel: (state.extra as Map<String, dynamic>?)?['level'] as String?,
-              ),
-              transitionDuration: const Duration(milliseconds: 400),
-              reverseTransitionDuration: const Duration(milliseconds: 300),
-              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-            ),
-          ),
-          GoRoute(
-            path: '/classroom-2',
-            name: 'classroom-2',
-            pageBuilder: (context, state) => CustomTransitionPage(
-              key: state.pageKey,
-              child: Classroom2Page(
-                schoolCode: (state.extra as Map<String, dynamic>?)?['schoolCode'] as String?,
-                schoolName: (state.extra as Map<String, dynamic>?)?['schoolName'] as String?,
-                schoolLevel: (state.extra as Map<String, dynamic>?)?['level'] as String?,
-              ),
-              transitionDuration: const Duration(milliseconds: 400),
-              reverseTransitionDuration: const Duration(milliseconds: 300),
-              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-            ),
-          ),
-          GoRoute(
-            path: '/classroom-3',
-            name: 'classroom-3',
-            pageBuilder: (context, state) => CustomTransitionPage(
-              key: state.pageKey,
-              child: Classroom3Page(
-                schoolCode: (state.extra as Map<String, dynamic>?)?['schoolCode'] as String?,
-                schoolName: (state.extra as Map<String, dynamic>?)?['schoolName'] as String?,
-                schoolLevel: (state.extra as Map<String, dynamic>?)?['level'] as String?,
-              ),
-              transitionDuration: const Duration(milliseconds: 400),
-              reverseTransitionDuration: const Duration(milliseconds: 300),
-              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-            ),
-          ),
+          // GoRoute(
+          //   path: '/classroom-1',
+          //   name: 'classroom-1',
+          //   pageBuilder: (context, state) => CustomTransitionPage(
+          //     key: state.pageKey,
+          //     child: ClassroomObservationPage(
+          //       schoolCode: (state.extra as Map<String, dynamic>?)?['schoolCode'] as String?,
+          //       schoolName: (state.extra as Map<String, dynamic>?)?['schoolName'] as String?,
+          //       schoolLevel: (state.extra as Map<String, dynamic>?)?['level'] as String?,
+          //     ),
+          //     transitionDuration: const Duration(milliseconds: 400),
+          //     reverseTransitionDuration: const Duration(milliseconds: 300),
+          //     transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          //       return FadeTransition(opacity: animation, child: child);
+          //     },
+          //   ),
+          // ),
+          // GoRoute(
+          //   path: '/classroom-2',
+          //   name: 'classroom-2',
+          //   pageBuilder: (context, state) => CustomTransitionPage(
+          //     key: state.pageKey,
+          //     child: Classroom2Page(
+          //       schoolCode: (state.extra as Map<String, dynamic>?)?['schoolCode'] as String?,
+          //       schoolName: (state.extra as Map<String, dynamic>?)?['schoolName'] as String?,
+          //       schoolLevel: (state.extra as Map<String, dynamic>?)?['level'] as String?,
+          //     ),
+          //     transitionDuration: const Duration(milliseconds: 400),
+          //     reverseTransitionDuration: const Duration(milliseconds: 300),
+          //     transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          //       return FadeTransition(opacity: animation, child: child);
+          //     },
+          //   ),
+          // ),
+          // GoRoute(
+          //   path: '/classroom-3',
+          //   name: 'classroom-3',
+          //   pageBuilder: (context, state) => CustomTransitionPage(
+          //     key: state.pageKey,
+          //     child: Classroom3Page(
+          //       schoolCode: (state.extra as Map<String, dynamic>?)?['schoolCode'] as String?,
+          //       schoolName: (state.extra as Map<String, dynamic>?)?['schoolName'] as String?,
+          //       schoolLevel: (state.extra as Map<String, dynamic>?)?['level'] as String?,
+          //     ),
+          //     transitionDuration: const Duration(milliseconds: 400),
+          //     reverseTransitionDuration: const Duration(milliseconds: 300),
+          //     transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          //       return FadeTransition(opacity: animation, child: child);
+          //     },
+          //   ),
+          // ),
           GoRoute(
             path: '/classroom',
-            name: 'classroom',
-            pageBuilder: (context, state) => CustomTransitionPage(
-              key: state.pageKey,
-              child: const ClassroomObservationPage(),
-              transitionDuration: const Duration(milliseconds: 400),
-              reverseTransitionDuration: const Duration(milliseconds: 300),
-              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-            ),
+            builder: (context, state) {
+              final extra = state.extra as Map<String, dynamic>?;
+
+              return ClassroomObservationPage(
+                schoolCode: extra?['schoolCode'],
+                schoolName: extra?['schoolName'],
+                schoolLevel: extra?['level'],
+              );
+            },
           ),
 
           // More Assessment Routes
@@ -553,6 +553,10 @@ GoRouter createRouter(AuthProvider authProvider) {
             path: '/sample-dashboard',
             name: 'sample-dashboard',
             builder: (context, state) => const SampleDashboardPage(),
+          ),
+          GoRoute(
+            path: '/my-submitted-schools',
+            builder: (context, state) => const MySubmittedSchoolsPage(),
           ),
         ],
       ),

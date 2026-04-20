@@ -233,7 +233,7 @@ class _LeadershipPageState extends State<LeadershipPage> {
             debugPrint('➡️ Navigating to classroom-1 (firstAssessment == No)');
             // If first assessment is No, skip infrastructure and go directly to classroom-1
             context.push(
-              '/classroom-1',
+              '/classroom',
               extra: {
                 'schoolCode': _schoolCode,
                 'schoolName': _schoolName,
@@ -245,7 +245,7 @@ class _LeadershipPageState extends State<LeadershipPage> {
             debugPrint('➡️ Navigating to infrastructure (firstAssessment == Yes or null)');
             // Otherwise go to infrastructure as normal
             context.push(
-              '/infrastructure',
+              '/classroom',
               extra: {
                 'schoolCode': _schoolCode,
                 'schoolName': _schoolName,

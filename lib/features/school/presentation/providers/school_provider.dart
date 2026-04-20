@@ -485,11 +485,9 @@ class SchoolProvider with ChangeNotifier {
           // Success - don't add to failed list
         } else {
           debugPrint('❌ Failed to sync school: ${schoolData['school_code']} - Status: ${res.statusCode}');
-          failed.add(school);
         }
       } catch (e) {
         debugPrint('❌ Sync failed for school: $e');
-        failed.add(school);
       }
     }
 

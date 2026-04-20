@@ -23,10 +23,23 @@ class _OfflineLeadershipPageState extends State<OfflineLeadershipPage> {
   bool _isSyncing = false;
   List<Map<String, dynamic>> _pendingLeadership = [];
 
+  // Cached questions
+  List<Map<String, dynamic>> _questions = [];
+
   @override
   void initState() {
     super.initState();
     _loadPending();
+    _loadQuestionsFromCache();
+  }
+
+  Future<void> _loadQuestionsFromCache() async {
+    final cachedList = LocalStorageService.getFromCache('leadership_questions');
+    if (cachedList != null && cachedList is List) {
+      setState(() {
+        _questions = cachedList.map((item) => Map<String, dynamic>.from(item)).toList();
+      });
+    }
   }
 
   Future<void> _loadPending() async {
@@ -110,6 +123,30 @@ class _OfflineLeadershipPageState extends State<OfflineLeadershipPage> {
     setState(() => _pendingLeadership = updated);
   }
 
+  Future<void> _updatePending(Map<String, dynamic> updatedItem) async {
+    final current = LocalStorageService.getPendingLeadership();
+    final index = current.indexWhere((p) => p['queuedAt'] == updatedItem['queuedAt']);
+
+    if (index != -1) {
+      current[index] = updatedItem;
+      final box = Hive.box(LocalStorageService.pendingLeadershipBox);
+      await box.put('pending', current);
+
+      setState(() {
+        _pendingLeadership = current;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Leadership assessment updated successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _deletePending(int index) async {
     final item = _pendingLeadership[index];
     final confirm = await showDialog<bool>(
@@ -127,6 +164,252 @@ class _OfflineLeadershipPageState extends State<OfflineLeadershipPage> {
       await _removeFromPending(item);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pending assessment deleted'), backgroundColor: Colors.red));
     }
+  }
+
+  // NEW: Edit dialog for offline leadership data with actual questions
+  void _showEditDialog(Map<String, dynamic> item) {
+    // Create editable copy
+    final editableItem = Map<String, dynamic>.from(item);
+
+    // School code controller
+    final schoolCodeController = TextEditingController(text: editableItem['school'] ?? '');
+
+    // Get scores from the item
+    Map<String, int> scores = {};
+    if (editableItem['scores'] != null) {
+      final scoresMap = editableItem['scores'] as Map;
+      scoresMap.forEach((key, value) {
+        if (value is int) {
+          scores[key.toString()] = value;
+        } else if (value is String) {
+          scores[key.toString()] = int.tryParse(value) ?? 0;
+        } else {
+          scores[key.toString()] = 0;
+        }
+      });
+    }
+
+    // Create controllers for each score
+    Map<String, TextEditingController> scoreControllers = {};
+    scores.forEach((key, value) {
+      scoreControllers[key] = TextEditingController(text: value.toString());
+    });
+
+    // Track score values
+    Map<String, int> editedScores = Map.from(scores);
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: Text('Edit Leadership Assessment: ${editableItem['school'] ?? 'Unnamed'}'),
+            content: Container(
+              width: double.maxFinite,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // School Information
+                    const Text('School Information', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: schoolCodeController,
+                      decoration: const InputDecoration(
+                        labelText: 'School Code',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (value) => editableItem['school'] = value,
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Leadership Questions
+                    const Text('Leadership Questions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 8),
+
+                    // Note about scoring
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        'All questions are 1 point each except 3.1, 3.2, 3.4, 3.5, 3.10, 3.12, 3.16 & 3.17 (2 points each)',
+                        style: TextStyle(fontSize: 12, color: Colors.blue),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Display questions with their text
+                    ..._questions.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final question = entry.value;
+                      final questionId = question['id']?.toString() ?? (index + 1).toString();
+                      final questionNumber = index + 1;
+                      final questionText = question['name'] ?? 'Question ${index + 1}';
+                      final currentValue = editedScores[questionId] ?? 0;
+
+                      // Determine max score (2 for special questions, 1 otherwise)
+                      final isTwoPointQuestion = [
+                        '3.1', '3.2', '3.4', '3.5', '3.10', '3.12', '3.16', '3.17'
+                      ].contains(questionNumber.toString());
+
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '$questionNumber. $questionText',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                    ),
+                                  ),
+                                  if (isTwoPointQuestion)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.primary,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: const Text(
+                                        '2 pts',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  _buildScoreOption(
+                                    label: 'Yes',
+                                    value: 1,
+                                    groupValue: currentValue,
+                                    onChanged: (v) {
+                                      setState(() {
+                                        editedScores[questionId] = v;
+                                        if (!scoreControllers.containsKey(questionId)) {
+                                          scoreControllers[questionId] = TextEditingController(text: v.toString());
+                                        } else {
+                                          scoreControllers[questionId]?.text = v.toString();
+                                        }
+                                      });
+                                    },
+                                  ),
+                                  _buildScoreOption(
+                                    label: 'No',
+                                    value: 0,
+                                    groupValue: currentValue,
+                                    onChanged: (v) {
+                                      setState(() {
+                                        editedScores[questionId] = v;
+                                        if (!scoreControllers.containsKey(questionId)) {
+                                          scoreControllers[questionId] = TextEditingController(text: v.toString());
+                                        } else {
+                                          scoreControllers[questionId]?.text = v.toString();
+                                        }
+                                      });
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  // Update the scores with edited values
+                  final updatedScores = <String, int>{};
+                  editedScores.forEach((key, value) {
+                    updatedScores[key] = value;
+                  });
+
+                  editableItem['scores'] = updatedScores;
+                  editableItem['school'] = schoolCodeController.text;
+
+                  Navigator.pop(context);
+                  await _updatePending(editableItem);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Update'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // Helper widget for score radio options
+  Widget _buildScoreOption({
+    required String label,
+    required int value,
+    required int groupValue,
+    required Function(int) onChanged,
+  }) {
+    return Expanded(
+      child: InkWell(
+        onTap: () => onChanged(value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+          decoration: BoxDecoration(
+            color: groupValue == value ? AppColors.primary.withOpacity(0.1) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: groupValue == value ? AppColors.primary : Colors.grey.shade300,
+              width: groupValue == value ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            children: [
+              Radio<int>(
+                value: value,
+                groupValue: groupValue,
+                onChanged: (v) => onChanged(v ?? 0),
+                activeColor: AppColors.primary,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: groupValue == value ? FontWeight.bold : FontWeight.normal,
+                  color: groupValue == value ? AppColors.primary : Colors.black87,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -214,44 +497,54 @@ class _OfflineLeadershipPageState extends State<OfflineLeadershipPage> {
                           ? DateFormat('dd MMM yyyy, HH:mm').format(DateTime.parse(item['queuedAt']))
                           : 'Unknown date';
                       final scoreCount = (item['scores'] as Map?)?.length ?? 0;
+
                       return Card(
                         margin: const EdgeInsets.only(bottom: 16),
                         elevation: 3,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-                          leading: CircleAvatar(
-                            radius: 30,
-                            backgroundColor: AppColors.primary.withOpacity(0.15),
-                            child: Icon(Icons.leaderboard_rounded, color: AppColors.primary, size: 32),
-                          ),
-                          title: Text(item['school'] ?? 'Unnamed School', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                        child: InkWell(
+                          onTap: () => _showEditDialog(item),
+                          borderRadius: BorderRadius.circular(16),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                            leading: CircleAvatar(
+                              radius: 30,
+                              backgroundColor: AppColors.primary.withOpacity(0.15),
+                              child: Icon(Icons.leaderboard_rounded, color: AppColors.primary, size: 32),
+                            ),
+                            title: Text(item['school'] ?? 'Unnamed School', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Code: ${item['school'] ?? 'N/A'}', style: const TextStyle(fontSize: 14)),
+                                  Text('Queued: $date', style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
+                                  const SizedBox(height: 4),
+                                  Text('Data: $scoreCount questions answered', style: const TextStyle(fontSize: 13, color: Colors.grey)),
+                                ],
+                              ),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text('Code: ${item['school'] ?? 'N/A'}', style: const TextStyle(fontSize: 14)),
-                                Text('Queued: $date', style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
-                                const SizedBox(height: 4),
-                                Text('Data: $scoreCount questions answered', style: const TextStyle(fontSize: 13, color: Colors.grey)),
+                                IconButton(
+                                  icon: const Icon(Icons.edit_outlined, color: AppColors.primary),
+                                  tooltip: 'Edit this pending assessment',
+                                  onPressed: _isSyncing ? null : () => _showEditDialog(item),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                                  tooltip: 'Delete pending',
+                                  onPressed: _isSyncing ? null : () => _deletePending(index),
+                                ),
+                                IconButton(
+                                  icon: Icon(Icons.sync_rounded, color: isOnline ? AppColors.primary : Colors.grey),
+                                  tooltip: isOnline ? 'Sync now' : 'Offline - connect to sync',
+                                  onPressed: (isOnline && !_isSyncing) ? () => _syncSingleFromCard(item) : null,
+                                ),
                               ],
                             ),
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
-                                tooltip: 'Delete pending',
-                                onPressed: _isSyncing ? null : () => _deletePending(index),
-                              ),
-                              IconButton(
-                                icon: Icon(Icons.sync_rounded, color: isOnline ? AppColors.primary : Colors.grey),
-                                tooltip: isOnline ? 'Sync now' : 'Offline - connect to sync',
-                                onPressed: (isOnline && !_isSyncing) ? () => _syncSingleFromCard(item) : null,
-                              ),
-                            ],
                           ),
                         ),
                       );

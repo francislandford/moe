@@ -109,9 +109,9 @@ class ProfilePage extends StatelessWidget {
 
                   _buildDetailTile(Icons.badge, 'User Type', usertype, textColor, secondaryTextColor, cardColor, context),
                   _buildDetailTile(Icons.phone, 'Phone', phone, textColor, secondaryTextColor, cardColor, context),
-                  _buildDetailTile(Icons.work, 'Project', project, textColor, secondaryTextColor, cardColor, context),
-                  _buildDetailTile(Icons.category, 'Category', cat, textColor, secondaryTextColor, cardColor, context),
-                  _buildDetailTile(Icons.location_on, 'District', district, textColor, secondaryTextColor, cardColor, context),
+                  // _buildDetailTile(Icons.work, 'Project', project, textColor, secondaryTextColor, cardColor, context),
+                  _buildDetailTile(Icons.category, 'County', cat, textColor, secondaryTextColor, cardColor, context),
+                  // _buildDetailTile(Icons.location_on, 'District', district, textColor, secondaryTextColor, cardColor, context),
 
                   const SizedBox(height: 32),
 

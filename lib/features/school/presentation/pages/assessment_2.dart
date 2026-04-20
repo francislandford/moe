@@ -115,7 +115,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
 
     return Scaffold(
       appBar: CustomAppBar(
-        title: 'Assessment for ${provider.schoolName}',
+        title: 'School Verification for ${provider.schoolName}',
         backgroundColor: AppColors.primary,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
@@ -199,6 +199,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                           const SizedBox(height: 32),
                         ],
 
+                        /*
                         // ─── 1.3 Required Teachers ─────────────────────────────
                         _sectionCard(
                           title: '1.3 Teacher Required',
@@ -289,6 +290,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                           ],
                         ),
                         const SizedBox(height: 32),
+                        */
 
                         // ─── 1.4 Verify Students – TABULAR FORM ─────────────────
                         _sectionCard(
@@ -359,6 +361,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                         ),
                         const SizedBox(height: 32),
 
+                        /*
                         // ─── 1.5 Verify Fees – TABULAR FORM FROM API ────────────
                         _sectionCard(
                           title: '1.5 Verify Fees',
@@ -426,6 +429,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                           ],
                         ),
                         const SizedBox(height: 32),
+                        */
 
                         // ─── VERIFICATION SECTION ───────
                         _sectionCard(
@@ -550,9 +554,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
     );
   }
 
-  // ────────────────────────────────────────────────
-  // Total Staff Section
-  // ────────────────────────────────────────────────
   Widget _buildTotalStaffSection(AssessmentProvider provider) {
     return Card(
       elevation: 2,
@@ -571,7 +572,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
               ),
             ),
             const SizedBox(height: 20),
-
             if (provider.isLoadingPositions)
               const Padding(
                 padding: EdgeInsets.only(bottom: 16),
@@ -580,12 +580,9 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                   style: TextStyle(color: Colors.grey, fontSize: 12),
                 ),
               ),
-
-            // Dynamic list of staff records
             ...List.generate(provider.staffRecords.length, (index) {
               return _staffRowWithPosition(context, index, provider.staffRecords[index], provider);
             }),
-
             if (provider.staffRecords.isEmpty)
               const Padding(
                 padding: EdgeInsets.all(16),
@@ -597,10 +594,7 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                   ),
                 ),
               ),
-
             const SizedBox(height: 16),
-
-            // Add button with key to ensure it's rebuildable
             OutlinedButton.icon(
               key: const ValueKey('add_staff_button'),
               icon: const Icon(Icons.add),
@@ -615,9 +609,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
     );
   }
 
-  // ────────────────────────────────────────────────
-  // Staff Row with Position Dropdown (RESTORED)
-  // ────────────────────────────────────────────────
   Widget _staffRowWithPosition(
       BuildContext context,
       int index,
@@ -640,8 +631,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
               validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
             ),
             const SizedBox(height: 16),
-
-            // Gender and Present in one row
             Row(
               children: [
                 Expanded(
@@ -665,6 +654,30 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                 const SizedBox(width: 16),
                 Expanded(
                   child: DropdownButtonFormField<String>(
+                    value: data['status'],
+                    decoration: const InputDecoration(
+                      labelText: 'Status *',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const ['Employed', 'Volunteer']
+                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                        .toList(),
+                    onChanged: (v) {
+                      data['status'] = v;
+                      provider.notifyListeners();
+                    },
+                    validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                    menuMaxHeight: 240,
+                    dropdownColor: Theme.of(context).scaffoldBackgroundColor,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
                     value: data['present'],
                     decoration: const InputDecoration(
                       labelText: 'Present',
@@ -677,7 +690,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                       data['present'] = v;
                       provider.notifyListeners();
 
-                      // Reset excuse and reason when present changes
                       if (v != 'No') {
                         if (data['excuse'] != null) {
                           data['excuse'] = 'Yes';
@@ -691,11 +703,13 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
                     dropdownColor: Theme.of(context).scaffoldBackgroundColor,
                   ),
                 ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Container(),
+                ),
               ],
             ),
             const SizedBox(height: 16),
-
-            // Conditionally show Excuse and Reason fields if Present is 'No'
             if (data['present'] == 'No') ...[
               Row(
                 children: [
@@ -738,8 +752,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
               ),
               const SizedBox(height: 16),
             ],
-
-            // Position (Dropdown) and Week Load (Text) in one row
             Row(
               children: [
                 Expanded(
@@ -791,8 +803,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
               ],
             ),
             const SizedBox(height: 16),
-
-            // Bio ID and Pay ID in one row
             Row(
               children: [
                 Expanded(
@@ -817,8 +827,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
               ],
             ),
             const SizedBox(height: 16),
-
-            // Qualification
             TextFormField(
               controller: data['qualification'],
               decoration: const InputDecoration(
@@ -841,9 +849,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
     );
   }
 
-  // ────────────────────────────────────────────────
-  // Verify Student Table Row with validation
-  // ────────────────────────────────────────────────
   Widget _verifyStudentTableRow(
       BuildContext context,
       String gradeName,
@@ -974,9 +979,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
     );
   }
 
-  // ────────────────────────────────────────────────
-  // Fee Table Row with validation
-  // ────────────────────────────────────────────────
   Widget _feeTableRow(
       BuildContext context,
       String feeName,
@@ -1104,9 +1106,6 @@ class _SchoolAssessmentFormContentState extends State<_SchoolAssessmentFormConte
     );
   }
 
-  // ────────────────────────────────────────────────
-  // Section Card
-  // ────────────────────────────────────────────────
   Widget _sectionCard({
     required String title,
     String? subtitle,

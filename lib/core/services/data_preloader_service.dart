@@ -37,7 +37,7 @@ class DataPreloaderService {
   static bool get preloadComplete => _preloadComplete;
 
   // Exact school levels
-  static const List<String> SCHOOL_LEVELS = ['ECE', 'Primary', 'JHS', 'SHS'];
+  static const List<String> SCHOOL_LEVELS = ['ECE', 'Primary', 'JHS', 'SHS', 'TVET'];
 
   // Main preload method
   static Future<void> preloadAllData(BuildContext context) async {

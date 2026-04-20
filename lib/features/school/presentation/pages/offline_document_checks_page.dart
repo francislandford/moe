@@ -23,10 +23,29 @@ class _OfflineDocumentChecksPageState extends State<OfflineDocumentChecksPage> {
   bool _isSyncing = false;
   List<Map<String, dynamic>> _pendingChecks = [];
 
+  // Cached questions
+  List<Map<String, dynamic>> _mainQuestions = [];
+  List<Map<String, dynamic>> _additionalQuestions = [];
+
   @override
   void initState() {
     super.initState();
     _loadPendingChecks();
+    _loadQuestionsFromCache();
+  }
+
+  Future<void> _loadQuestionsFromCache() async {
+    // Load main questions
+    final mainCached = LocalStorageService.getFromCache('document_check_questions');
+    if (mainCached != null && mainCached is List) {
+      _mainQuestions = mainCached.map((item) => Map<String, dynamic>.from(item)).toList();
+    }
+
+    // Load additional questions
+    final additionalCached = LocalStorageService.getFromCache('additional_document_questions');
+    if (additionalCached != null && additionalCached is List) {
+      _additionalQuestions = additionalCached.map((item) => Map<String, dynamic>.from(item)).toList();
+    }
   }
 
   Future<void> _loadPendingChecks() async {
@@ -118,6 +137,30 @@ class _OfflineDocumentChecksPageState extends State<OfflineDocumentChecksPage> {
     setState(() => _pendingChecks = updated);
   }
 
+  Future<void> _updatePendingCheck(Map<String, dynamic> updatedCheck) async {
+    final current = LocalStorageService.getPendingDocumentChecks();
+    final index = current.indexWhere((c) => c['queuedAt'] == updatedCheck['queuedAt']);
+
+    if (index != -1) {
+      current[index] = updatedCheck;
+      final box = Hive.box(LocalStorageService.pendingDocumentChecksBox);
+      await box.put('pending', current);
+
+      setState(() {
+        _pendingChecks = current;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Document check updated successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _deletePending(int index) async {
     final check = _pendingChecks[index];
     final confirm = await showDialog<bool>(
@@ -135,6 +178,307 @@ class _OfflineDocumentChecksPageState extends State<OfflineDocumentChecksPage> {
       await _removeFromPending(check);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pending document check deleted'), backgroundColor: Colors.red));
     }
+  }
+
+  // NEW: Edit dialog for offline document check data with actual questions
+  void _showEditDialog(Map<String, dynamic> check) {
+    // Create editable copies
+    final editableCheck = Map<String, dynamic>.from(check);
+
+    // School code controller
+    final schoolCodeController = TextEditingController(text: editableCheck['school'] ?? '');
+
+    // Get scores from the check
+    Map<String, int> scores = {};
+    if (editableCheck['scores'] != null) {
+      final scoresMap = editableCheck['scores'] as Map;
+      scoresMap.forEach((key, value) {
+        if (value is int) {
+          scores[key.toString()] = value;
+        } else if (value is String) {
+          scores[key.toString()] = int.tryParse(value) ?? 0;
+        } else {
+          scores[key.toString()] = 0;
+        }
+      });
+    }
+
+    // Create controllers for each score
+    Map<String, TextEditingController> scoreControllers = {};
+    scores.forEach((key, value) {
+      scoreControllers[key] = TextEditingController(text: value.toString());
+    });
+
+    // Track score values
+    Map<String, int> editedScores = Map.from(scores);
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: Text('Edit Document Check: ${editableCheck['school'] ?? 'Unnamed'}'),
+            content: Container(
+              width: double.maxFinite,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // School Information
+                    const Text('School Information', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: schoolCodeController,
+                      decoration: const InputDecoration(
+                        labelText: 'School Code',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (value) => editableCheck['school'] = value,
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Main Questions Scores
+                    const Text('Document Check Questions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 8),
+
+                    // Display main questions with their text
+                    ..._mainQuestions.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final question = entry.value;
+                      final questionId = (index + 1).toString(); // Questions are numbered 1,2,3...
+                      final questionText = question['name'] ?? 'Question ${index + 1}';
+                      final currentValue = editedScores[questionId] ?? 0;
+
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${index + 1}. $questionText',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  _buildScoreOption(
+                                    label: 'Yes (up-to-date)',
+                                    value: 2,
+                                    groupValue: currentValue,
+                                    onChanged: (v) {
+                                      setState(() {
+                                        editedScores[questionId] = v;
+                                        if (!scoreControllers.containsKey(questionId)) {
+                                          scoreControllers[questionId] = TextEditingController(text: v.toString());
+                                        } else {
+                                          scoreControllers[questionId]?.text = v.toString();
+                                        }
+                                      });
+                                    },
+                                  ),
+                                  _buildScoreOption(
+                                    label: 'Yes (not up-to-date)',
+                                    value: 1,
+                                    groupValue: currentValue,
+                                    onChanged: (v) {
+                                      setState(() {
+                                        editedScores[questionId] = v;
+                                        if (!scoreControllers.containsKey(questionId)) {
+                                          scoreControllers[questionId] = TextEditingController(text: v.toString());
+                                        } else {
+                                          scoreControllers[questionId]?.text = v.toString();
+                                        }
+                                      });
+                                    },
+                                  ),
+                                  _buildScoreOption(
+                                    label: 'No',
+                                    value: 0,
+                                    groupValue: currentValue,
+                                    onChanged: (v) {
+                                      setState(() {
+                                        editedScores[questionId] = v;
+                                        if (!scoreControllers.containsKey(questionId)) {
+                                          scoreControllers[questionId] = TextEditingController(text: v.toString());
+                                        } else {
+                                          scoreControllers[questionId]?.text = v.toString();
+                                        }
+                                      });
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+
+                    const SizedBox(height: 16),
+
+                    // Additional Questions (if available)
+                    if (_additionalQuestions.isNotEmpty) ...[
+                      const Text('Additional Questions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.primary)),
+                      const SizedBox(height: 8),
+
+                      ..._additionalQuestions.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final question = entry.value;
+                        final questionId = (index + _mainQuestions.length + 1).toString();
+                        final questionText = question['name'] ?? 'Additional Question ${index + 1}';
+                        final currentValue = editedScores[questionId] ?? 0;
+
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${index + 1}. $questionText',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                  children: [
+                                    _buildScoreOption(
+                                      label: 'Yes (up-to-date)',
+                                      value: 2,
+                                      groupValue: currentValue,
+                                      onChanged: (v) {
+                                        setState(() {
+                                          editedScores[questionId] = v;
+                                          if (!scoreControllers.containsKey(questionId)) {
+                                            scoreControllers[questionId] = TextEditingController(text: v.toString());
+                                          } else {
+                                            scoreControllers[questionId]?.text = v.toString();
+                                          }
+                                        });
+                                      },
+                                    ),
+                                    _buildScoreOption(
+                                      label: 'Yes (not up-to-date)',
+                                      value: 1,
+                                      groupValue: currentValue,
+                                      onChanged: (v) {
+                                        setState(() {
+                                          editedScores[questionId] = v;
+                                          if (!scoreControllers.containsKey(questionId)) {
+                                            scoreControllers[questionId] = TextEditingController(text: v.toString());
+                                          } else {
+                                            scoreControllers[questionId]?.text = v.toString();
+                                          }
+                                        });
+                                      },
+                                    ),
+                                    _buildScoreOption(
+                                      label: 'No',
+                                      value: 0,
+                                      groupValue: currentValue,
+                                      onChanged: (v) {
+                                        setState(() {
+                                          editedScores[questionId] = v;
+                                          if (!scoreControllers.containsKey(questionId)) {
+                                            scoreControllers[questionId] = TextEditingController(text: v.toString());
+                                          } else {
+                                            scoreControllers[questionId]?.text = v.toString();
+                                          }
+                                        });
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  // Update the scores with edited values
+                  final updatedScores = <String, int>{};
+                  editedScores.forEach((key, value) {
+                    updatedScores[key] = value;
+                  });
+
+                  editableCheck['scores'] = updatedScores;
+                  editableCheck['school'] = schoolCodeController.text;
+
+                  Navigator.pop(context);
+                  await _updatePendingCheck(editableCheck);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Update'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // Helper widget for score radio options
+  Widget _buildScoreOption({
+    required String label,
+    required int value,
+    required int groupValue,
+    required Function(int) onChanged,
+  }) {
+    return Expanded(
+      child: InkWell(
+        onTap: () => onChanged(value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+          decoration: BoxDecoration(
+            color: groupValue == value ? AppColors.primary.withOpacity(0.1) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: groupValue == value ? AppColors.primary : Colors.grey.shade300,
+              width: groupValue == value ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            children: [
+              Radio<int>(
+                value: value,
+                groupValue: groupValue,
+                onChanged: (v) => onChanged(v ?? 0),
+                activeColor: AppColors.primary,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: groupValue == value ? FontWeight.bold : FontWeight.normal,
+                  color: groupValue == value ? AppColors.primary : Colors.black87,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -223,44 +567,54 @@ class _OfflineDocumentChecksPageState extends State<OfflineDocumentChecksPage> {
                           ? DateFormat('dd MMM yyyy, HH:mm').format(DateTime.parse(check['queuedAt']))
                           : 'Unknown date';
                       final scoreCount = (check['scores'] as Map?)?.length ?? 0;
+
                       return Card(
                         margin: const EdgeInsets.only(bottom: 16),
                         elevation: 3,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-                          leading: CircleAvatar(
-                            radius: 30,
-                            backgroundColor: AppColors.primary.withOpacity(0.15),
-                            child: Icon(Icons.description_rounded, color: AppColors.primary, size: 32),
-                          ),
-                          title: Text(check['school'] ?? 'Unnamed School', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                        child: InkWell(
+                          onTap: () => _showEditDialog(check),
+                          borderRadius: BorderRadius.circular(16),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                            leading: CircleAvatar(
+                              radius: 30,
+                              backgroundColor: AppColors.primary.withOpacity(0.15),
+                              child: Icon(Icons.description_rounded, color: AppColors.primary, size: 32),
+                            ),
+                            title: Text(check['school'] ?? 'Unnamed School', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Code: ${check['school'] ?? 'N/A'}', style: const TextStyle(fontSize: 14)),
+                                  Text('Queued: $date', style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
+                                  const SizedBox(height: 4),
+                                  Text('Data: $scoreCount questions answered', style: const TextStyle(fontSize: 13, color: Colors.grey)),
+                                ],
+                              ),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text('Code: ${check['school'] ?? 'N/A'}', style: const TextStyle(fontSize: 14)),
-                                Text('Queued: $date', style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
-                                const SizedBox(height: 4),
-                                Text('Data: $scoreCount questions answered', style: const TextStyle(fontSize: 13, color: Colors.grey)),
+                                IconButton(
+                                  icon: const Icon(Icons.edit_outlined, color: AppColors.primary),
+                                  tooltip: 'Edit this pending check',
+                                  onPressed: _isSyncing ? null : () => _showEditDialog(check),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                                  tooltip: 'Delete this pending submission',
+                                  onPressed: _isSyncing ? null : () => _deletePending(index),
+                                ),
+                                IconButton(
+                                  icon: Icon(Icons.sync_rounded, color: isOnline ? AppColors.primary : Colors.grey),
+                                  tooltip: isOnline ? 'Sync now' : 'Offline - connect to sync',
+                                  onPressed: (isOnline && !_isSyncing) ? () => _syncSingleCheckFromCard(check) : null,
+                                ),
                               ],
                             ),
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
-                                tooltip: 'Delete this pending submission',
-                                onPressed: _isSyncing ? null : () => _deletePending(index),
-                              ),
-                              IconButton(
-                                icon: Icon(Icons.sync_rounded, color: isOnline ? AppColors.primary : Colors.grey),
-                                tooltip: isOnline ? 'Sync now' : 'Offline - connect to sync',
-                                onPressed: (isOnline && !_isSyncing) ? () => _syncSingleCheckFromCard(check) : null,
-                              ),
-                            ],
                           ),
                         ),
                       );

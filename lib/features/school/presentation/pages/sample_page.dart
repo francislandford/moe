@@ -21,7 +21,7 @@ class _SampleDashboardPageState extends State<SampleDashboardPage> {
   // Sample school data passed to every page
   static const Map<String, dynamic> sampleSchoolData = {
     'schoolName': 'St Francis High School',
-    'schoolCode': 'MOE-046-005',
+    'schoolCode': 'MOE-188-011',
     'level': 'ECE',
     'firstAssessment': 'No',
   };
@@ -167,7 +167,7 @@ class _SampleDashboardPageState extends State<SampleDashboardPage> {
                       _buildCard(
                         context: context,
                         icon: Icons.cloud_upload,
-                        title: 'Offline Assessments',
+                        title: 'Offline School Verification',
                         color: Colors.deepOrange,
                         route: '/offline-assessments',
                         badgeCount: _offlineCounts['assessments']!,
@@ -176,6 +176,8 @@ class _SampleDashboardPageState extends State<SampleDashboardPage> {
                         context: context,
                         icon: Icons.description_outlined,
                         title: 'Offline Doc Checks',
+
+
                         color: Colors.amber,
                         route: '/offline-document-checks',
                         badgeCount: _offlineCounts['documentChecks']!,
@@ -191,9 +193,9 @@ class _SampleDashboardPageState extends State<SampleDashboardPage> {
                       // _buildCard(
                       //   context: context,
                       //   icon: Icons.group,
-                      //   title: 'Leadership',
+                      //   title: 'classroom',
                       //   color: Colors.indigo,
-                      //   route: '/leadership',
+                      //   route: '/classroom',
                       //   badgeCount: _offlineCounts['leadership']!,
                       // ),
                       // _buildCard(
@@ -204,14 +206,14 @@ class _SampleDashboardPageState extends State<SampleDashboardPage> {
                       //   route: '/document-check',
                       //   badgeCount: _offlineCounts['leadership']!,
                       // ),
-                      _buildCard(
-                        context: context,
-                        icon: Icons.domain,
-                        title: 'Offline Infrastructure',
-                        color: Colors.teal,
-                        route: '/offline-infrastructure',
-                        badgeCount: _offlineCounts['infrastructure']!,
-                      ),
+                      // _buildCard(
+                      //   context: context,
+                      //   icon: Icons.domain,
+                      //   title: 'Offline Infrastructure',
+                      //   color: Colors.teal,
+                      //   route: '/offline-infrastructure',
+                      //   badgeCount: _offlineCounts['infrastructure']!,
+                      // ),
                       _buildCard(
                         context: context,
                         icon: Icons.school,
@@ -220,30 +222,30 @@ class _SampleDashboardPageState extends State<SampleDashboardPage> {
                         route: '/offline-classroom-observation',
                         badgeCount: _offlineCounts['classroom']!,
                       ),
-                      _buildCard(
-                        context: context,
-                        icon: Icons.family_restroom,
-                        title: 'Offline Parents',
-                        color: Colors.purple,
-                        route: '/offline-parent-participation',
-                        badgeCount: _offlineCounts['parents']!,
-                      ),
-                      _buildCard(
-                        context: context,
-                        icon: Icons.people,
-                        title: 'Offline Students',
-                        color: Colors.purple,
-                        route: '/offline-student-participation',
-                        badgeCount: _offlineCounts['students']!,
-                      ),
-                      _buildCard(
-                        context: context,
-                        icon: Icons.menu_book,
-                        title: 'Offline Textbooks',
-                        color: Colors.purple,
-                        route: '/offline-textbooks-teaching',
-                        badgeCount: _offlineCounts['textbooks']!,
-                      ),
+                      // _buildCard(
+                      //   context: context,
+                      //   icon: Icons.family_restroom,
+                      //   title: 'Offline Parents',
+                      //   color: Colors.purple,
+                      //   route: '/offline-parent-participation',
+                      //   badgeCount: _offlineCounts['parents']!,
+                      // ),
+                      // _buildCard(
+                      //   context: context,
+                      //   icon: Icons.people,
+                      //   title: 'Offline Students',
+                      //   color: Colors.purple,
+                      //   route: '/offline-student-participation',
+                      //   badgeCount: _offlineCounts['students']!,
+                      // ),
+                      // _buildCard(
+                      //   context: context,
+                      //   icon: Icons.menu_book,
+                      //   title: 'Offline Textbooks',
+                      //   color: Colors.purple,
+                      //   route: '/offline-textbooks-teaching',
+                      //   badgeCount: _offlineCounts['textbooks']!,
+                      // ),
                     ],
                   ),
                 ),
@@ -284,7 +286,7 @@ class _SampleDashboardPageState extends State<SampleDashboardPage> {
           route,
           extra: {
             'schoolName': 'St Francis High School',
-            'schoolCode': 'MOE-046-005',
+            'schoolCode': 'MOE-188-011',
             'level': 'ECE',
             'firstAssessment': 'No',
           },

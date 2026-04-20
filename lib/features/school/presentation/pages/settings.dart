@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_url.dart';
@@ -95,7 +96,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _onSyncProgressUpdate() {
     if (syncProgressNotifier.value.progress >= 1.0) {
-      // Sync completed, reload pending count
       _loadPendingCount();
     }
   }
@@ -107,6 +107,66 @@ class _SettingsPageState extends State<SettingsPage> {
         _pendingCount = count;
         _isLoadingCount = false;
       });
+    }
+  }
+
+  Future<void> _downloadAppUpdate() async {
+    final Uri uri = Uri.parse('https://smegap.moe.gov.lr/pg_img/app-release.apk');
+
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to start download'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('App update launch error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open update link'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _showUpdateDownloadDialog() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Download App Update'),
+        content: const Text(
+          'Do you want to download the latest app update now?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.download_rounded),
+            label: const Text('Download'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _downloadAppUpdate();
     }
   }
 
@@ -228,7 +288,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 subtitle: const Text('Change your account password'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () {
-                  // Navigate to forgot password page
                   context.push('/forgot-password');
                 },
               ),
@@ -279,14 +338,14 @@ class _SettingsPageState extends State<SettingsPage> {
                     return;
                   }
 
-                  // Show confirmation dialog
                   final confirm = await showDialog<bool>(
                     context: context,
                     builder: (context) => AlertDialog(
                       title: const Text('Preload Offline Data'),
                       content: const Text(
-                          'This will download all reference data (schools, grades, subjects, questions) for offline use. '
-                              'This may take a few moments and requires an internet connection.'),
+                        'This will download all reference data (schools, grades, subjects, questions) for offline use. '
+                            'This may take a few moments and requires an internet connection.',
+                      ),
                       actions: [
                         TextButton(
                           onPressed: () => Navigator.pop(context, false),
@@ -305,7 +364,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   );
 
                   if (confirm == true && context.mounted) {
-                    // Show preload dialog with progress
                     showDialog(
                       context: context,
                       barrierDismissible: false,
@@ -314,7 +372,6 @@ class _SettingsPageState extends State<SettingsPage> {
                       },
                     );
 
-                    // Start preloading
                     await DataPreloaderService.preloadAllData(context);
                   }
                 },
@@ -346,7 +403,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     : _pendingCount > 0
                     ? Container(
                   padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
+                  decoration: const BoxDecoration(
                     color: Colors.red,
                     shape: BoxShape.circle,
                   ),
@@ -372,14 +429,14 @@ class _SettingsPageState extends State<SettingsPage> {
                     return;
                   }
 
-                  // Show confirmation dialog
                   final confirm = await showDialog<bool>(
                     context: context,
                     builder: (context) => AlertDialog(
                       title: const Text('Sync All Offline Data'),
                       content: Text(
-                          'This will upload $_pendingCount pending item(s) to the server. '
-                              'This may take a few moments and requires an internet connection.'),
+                        'This will upload $_pendingCount pending item(s) to the server. '
+                            'This may take a few moments and requires an internet connection.',
+                      ),
                       actions: [
                         TextButton(
                           onPressed: () => Navigator.pop(context, false),
@@ -398,7 +455,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   );
 
                   if (confirm == true && context.mounted) {
-                    // Show sync dialog with progress
                     showDialog(
                       context: context,
                       barrierDismissible: false,
@@ -407,14 +463,27 @@ class _SettingsPageState extends State<SettingsPage> {
                       },
                     );
 
-                    // Start syncing
                     await _syncAllOfflineData(context);
-
-                    // Reload pending count after sync
                     await _loadPendingCount();
+
+                    if (context.mounted && await LocalStorageService.isOnline()) {
+                      await Future.delayed(const Duration(milliseconds: 1200));
+
+                      if (!context.mounted) return;
+
+                      showDialog(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (BuildContext context) {
+                          return const PreloadDataDialog();
+                        },
+                      );
+
+                      await DataPreloaderService.preloadAllData(context);
+                    }
                   }
                 }
-                    : null, // Disable when offline or loading
+                    : null,
               ),
 
               ListTile(
@@ -446,6 +515,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
               // ─── About & Support ──────────────────────────────────────────────
               _buildSectionHeader(context, 'About & Support'),
+              ListTile(
+                leading: const Icon(Icons.system_update_alt_rounded, color: AppColors.primary),
+                title: const Text('Download App Update'),
+                subtitle: const Text('Download the latest APK version'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _showUpdateDownloadDialog,
+              ),
               ListTile(
                 leading: const Icon(Icons.info_outline),
                 title: const Text('About the App'),
@@ -515,7 +591,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
                     if (confirm == true && context.mounted) {
                       await Provider.of<AuthProvider>(context, listen: false).logout();
-                      // Router will redirect to login automatically
                     }
                   },
                 ),
@@ -552,7 +627,7 @@ class _SettingsPageState extends State<SettingsPage> {
       padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
       child: Text(
         title.toUpperCase(),
-        style: TextStyle(
+        style: const TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.bold,
           color: AppColors.primary,
@@ -578,7 +653,11 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   // Helper method to sync a single assessment
-  Future<bool> _syncSingleAssessment(Map<String, dynamic> assessment, BuildContext context, Map<String, String> headers) async {
+  Future<bool> _syncSingleAssessment(
+      Map<String, dynamic> assessment,
+      BuildContext context,
+      Map<String, String> headers,
+      ) async {
     final school = assessment['schoolCode'] ?? assessment['schoolName'] ?? 'unknown';
 
     try {
@@ -1170,7 +1249,7 @@ class _PreloadDataDialogState extends State<PreloadDataDialog> {
                         padding: const EdgeInsets.symmetric(vertical: 2),
                         child: Row(
                           children: [
-                            Icon(Icons.check_circle, color: Colors.green, size: 16),
+                            const Icon(Icons.check_circle, color: Colors.green, size: 16),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
@@ -1180,7 +1259,7 @@ class _PreloadDataDialogState extends State<PreloadDataDialog> {
                             ),
                           ],
                         ),
-                      )).toList(),
+                      )),
                     ],
                     if (_preloadComplete) ...[
                       const SizedBox(height: 16),
@@ -1317,7 +1396,7 @@ class _SyncDataDialogState extends State<SyncDataDialog> {
                         padding: const EdgeInsets.symmetric(vertical: 2),
                         child: Row(
                           children: [
-                            Icon(Icons.check_circle, color: Colors.green, size: 16),
+                            const Icon(Icons.check_circle, color: Colors.green, size: 16),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
@@ -1327,7 +1406,7 @@ class _SyncDataDialogState extends State<SyncDataDialog> {
                             ),
                           ],
                         ),
-                      )).toList(),
+                      )),
                     ],
                     if (progress.moduleCounts.isNotEmpty && !_syncComplete) ...[
                       const SizedBox(height: 8),
@@ -1339,7 +1418,7 @@ class _SyncDataDialogState extends State<SyncDataDialog> {
                           padding: const EdgeInsets.symmetric(vertical: 2),
                           child: Row(
                             children: [
-                              Icon(Icons.pending_rounded, color: Colors.orange, size: 16),
+                              const Icon(Icons.pending_rounded, color: Colors.orange, size: 16),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
@@ -1350,7 +1429,7 @@ class _SyncDataDialogState extends State<SyncDataDialog> {
                             ],
                           ),
                         );
-                      }).toList(),
+                      }),
                     ],
                     if (_syncComplete) ...[
                       const SizedBox(height: 16),

@@ -81,29 +81,6 @@ class AssessmentCompletePage extends StatelessWidget {
                 const SizedBox(height: 48),
 
                 // Main action button
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      // Navigate to school list or new assessment flow
-                      context.go('/schools'); // ← change to your actual route
-                      // OR: context.go('/new-assessment'); // if you have a direct new assessment route
-                    },
-                    icon: const Icon(Icons.add_circle_outline, size: 28),
-                    label: const Text(
-                      'Add New Assessment',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                  ),
-                ),
 
                 const SizedBox(height: 24),
 
